@@ -24,6 +24,9 @@ export default function NewVendor() {
   const [form, setForm] = useState({
     name: "",
     phoneNumber: "",
+    botNumber: "",
+    adminNumber: "",
+    phoneNumberId: "",
     plan: "starter" as "starter" | "pro",
     currency: "USD",
     bankName: "",
@@ -45,6 +48,9 @@ export default function NewVendor() {
           phoneNumber: form.phoneNumber,
           plan: form.plan,
           currency: form.currency,
+          ...(form.botNumber ? { botNumber: form.botNumber } : {}),
+          ...(form.adminNumber ? { adminNumber: form.adminNumber } : {}),
+          ...(form.phoneNumberId ? { phoneNumberId: form.phoneNumberId } : {}),
           ...(form.bankName ? { bankName: form.bankName } : {}),
           ...(form.bankAccountNumber ? { bankAccountNumber: form.bankAccountNumber } : {}),
           ...(form.bankAccountHolder ? { bankAccountHolder: form.bankAccountHolder } : {}),
@@ -87,8 +93,9 @@ export default function NewVendor() {
             </div>
             <div className="grid gap-2 md:grid-cols-2 md:gap-4">
               <div className="grid gap-2">
-                <Label htmlFor="phone">WhatsApp number</Label>
+                <Label htmlFor="phone">WhatsApp business number</Label>
                 <Input id="phone" required value={form.phoneNumber} onChange={(e) => update("phoneNumber", e.target.value)} placeholder="+15551234567" />
+                <p className="text-xs text-muted-foreground">The number customers see in chat.</p>
               </div>
               <div className="grid gap-2">
                 <Label htmlFor="currency">Currency</Label>
@@ -105,6 +112,32 @@ export default function NewVendor() {
             <div className="grid gap-2">
               <Label htmlFor="welcome">Welcome message</Label>
               <Textarea id="welcome" rows={3} value={form.welcomeMessage} onChange={(e) => update("welcomeMessage", e.target.value)} placeholder="Welcome to Sunrise Pizza! Reply MENU to start." />
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card className="mt-4">
+          <CardHeader>
+            <CardTitle>WhatsApp routing</CardTitle>
+            <CardDescription>Optional Meta WhatsApp Cloud API details. Leave blank to use the simulator only.</CardDescription>
+          </CardHeader>
+          <CardContent className="grid gap-4">
+            <div className="grid gap-2 md:grid-cols-2 md:gap-4">
+              <div className="grid gap-2">
+                <Label htmlFor="botNumber">Bot display number</Label>
+                <Input id="botNumber" value={form.botNumber} onChange={(e) => update("botNumber", e.target.value)} placeholder="+15551234567" />
+                <p className="text-xs text-muted-foreground">Same as the business number unless you display a different one.</p>
+              </div>
+              <div className="grid gap-2">
+                <Label htmlFor="adminNumber">Vendor admin number</Label>
+                <Input id="adminNumber" value={form.adminNumber} onChange={(e) => update("adminNumber", e.target.value)} placeholder="+15558881111" />
+                <p className="text-xs text-muted-foreground">Vendor's personal WhatsApp. Receives order alerts and runs admin commands.</p>
+              </div>
+            </div>
+            <div className="grid gap-2">
+              <Label htmlFor="phoneNumberId">Meta phone_number_id</Label>
+              <Input id="phoneNumberId" value={form.phoneNumberId} onChange={(e) => update("phoneNumberId", e.target.value)} placeholder="100000000000001" />
+              <p className="text-xs text-muted-foreground">From Meta WhatsApp Manager. Used to route inbound webhooks to this vendor.</p>
             </div>
           </CardContent>
         </Card>

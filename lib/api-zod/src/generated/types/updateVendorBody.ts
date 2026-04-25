@@ -10,6 +10,9 @@ import type { Plan } from "./plan";
 export interface UpdateVendorBody {
   name?: string;
   phoneNumber?: string;
+  adminNumber?: string;
+  phoneNumberId?: string;
+  botNumber?: string;
   plan?: Plan;
   botEnabled?: boolean;
   bankName?: string;

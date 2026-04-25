@@ -31,6 +31,7 @@ export * from "./orderStatus";
 export * from "./payment";
 export * from "./paymentMethod";
 export * from "./paymentStatus";
+export * from "./paymentStatusProperty";
 export * from "./plan";
 export * from "./sendMessageBody";
 export * from "./sendMessageBodySender";

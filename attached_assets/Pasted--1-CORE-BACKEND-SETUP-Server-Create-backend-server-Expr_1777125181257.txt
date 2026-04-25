@@ -1,0 +1,172 @@
+🧱 1. CORE BACKEND SETUP
+Server
+ Create backend server (Express or FastAPI)
+ Setup environment variables:
+ ACCESS_TOKEN (Meta)
+ VERIFY_TOKEN
+ DATABASE_URL
+Webhook Endpoints
+ GET /webhook/messages (Meta verification)
+ POST /webhook/messages (incoming messages)
+🗄 2. DATABASE STRUCTURE
+Vendors Table
+ id
+ name
+ admin_number (vendor personal number)
+ phone_number_id (Meta ID)
+ bot_number (display number)
+ plan (starter | pro)
+ bot_status (active | paused)
+Menu Table
+ id
+ vendor_id
+ items (name + price)
+Orders Table
+ id
+ vendor_id
+ customer_number
+ items
+ status (pending | confirmed | rejected)
+ payment_status (pending | paid)
+Chats Table
+ id
+ vendor_id
+ customer_number
+ mode (bot | human)
+📡 3. WHATSAPP INTEGRATION
+ Receive incoming messages from webhook
+ Extract:
+ sender number
+ message text
+ phone_number_id (VERY IMPORTANT)
+Send Message Function
+ sendMessage(phone_number_id, to, text)
+🔀 4. MULTI-VENDOR ROUTING
+ Identify vendor using phone_number_id
+ Route message to correct vendor
+phone_number_id → vendor → process message
+🧠 5. MESSAGE HANDLER
+Core handler
+ Detect if sender is:
+ vendor (admin_number)
+ customer
+👤 6. ADMIN (VENDOR) COMMAND SYSTEM
+
+If sender == admin_number:
+
+ Handle menu updates via chat
+ Handle order confirmation
+ Handle payment confirmation
+ Handle bot/human switching
+🧾 7. MENU SYSTEM
+Customer Side
+ Detect “menu” request
+ Return vendor menu
+Vendor Side
+ Parse message like:
+“Jollof Rice 2500”
+ Update menu in DB
+🛒 8. ORDER SYSTEM
+Detection
+ Detect simple order messages
+Creation
+ Store order in DB:
+items
+customer number
+vendor_id
+Vendor Notification
+
+ Send:
+
+“New order from +234…”
+
+Vendor Actions
+ “confirm” → update status
+ “reject” → update status
+Customer Notification
+ Send confirmation/rejection message
+💰 9. PAYMENT SYSTEM
+Starter Plan (ONLY)
+ Store vendor bank details (can be simple text)
+After Order Confirmation
+
+ Send:
+
+“Pay ₦X to this account…”
+
+Vendor Confirms Payment
+ Vendor sends “paid”
+ Update order → payment_status = paid
+🧑‍💻 10. HUMAN HANDOVER
+Customer Request
+ Detect:
+“agent”
+“talk to someone”
+Switch Mode
+ Update chat → mode = human
+While in Human Mode
+ Bot stops replying
+ Vendor replies manually
+Return to Bot
+ Vendor sends:
+“/bot”
+ mode = bot
+📊 11. PLAN SYSTEM
+Vendor Field
+ plan = starter | pro
+Feature Gating
+ Implement hasFeature(vendor, feature)
+Starter Includes
+ everything works:
+bot replies
+menu
+orders
+payments (manual)
+handover
+Pro (ONLY define, not fully build yet)
+ analytics (flag only for now)
+🖥 12. ADMIN WEBSITE (YOUR PANEL)
+Vendor Management
+ Create vendor
+ Input:
+name
+admin_number
+phone_number_id
+bot_number
+Vendor List
+ View all vendors
+Plan Control
+ Upgrade vendor plan (starter → pro)
+Bot Control
+ Toggle bot_status (active / paused)
+🔌 13. META INTEGRATION REQUIREMENTS
+ App created
+ WhatsApp product added
+ Webhook connected
+ Messages subscription enabled
+Per Vendor
+ Number added manually in Meta
+ OTP verified
+ phone_number_id copied into system
+🧪 14. TESTING CHECKLIST
+ Customer sends message → bot replies
+ Menu request works
+ Vendor updates menu via chat
+ Order is created correctly
+ Vendor receives order
+ Vendor confirms order
+ Payment instruction sent
+ Vendor confirms payment
+ Handover works
+ Bot resumes after handover
+🚀 15. LAUNCH READINESS
+ At least 1 working vendor
+ Real message flow tested
+ Real order completed
+ Payment confirmed manually
+🧠 FINAL CONSTRAINTS (DO NOT BREAK THESE)
+ One backend for all vendors
+ One Meta app for all vendors
+ One webhook for all messages
+ No per-vendor deployments
+ Vendors interact ONLY via chat (no dashboard)

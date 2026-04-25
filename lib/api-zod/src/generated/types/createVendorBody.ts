@@ -12,6 +12,9 @@ export interface CreateVendorBody {
   name: string;
   /** @minLength 4 */
   phoneNumber: string;
+  adminNumber?: string;
+  phoneNumberId?: string;
+  botNumber?: string;
   plan: Plan;
   bankName?: string;
   bankAccountNumber?: string;

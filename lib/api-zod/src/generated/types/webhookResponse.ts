@@ -10,4 +10,6 @@ export interface WebhookResponse {
   ok: boolean;
   botReply?: string | null;
   conversationId?: string | null;
+  isAdmin?: boolean;
+  adminNotification?: string | null;
 }

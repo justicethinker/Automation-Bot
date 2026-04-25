@@ -20,6 +20,9 @@ export interface Vendor {
   id: string;
   name: string;
   phoneNumber: string;
+  adminNumber?: string | null;
+  phoneNumberId?: string | null;
+  botNumber?: string | null;
   plan: Plan;
   botEnabled: boolean;
   bankName?: string | null;
@@ -50,6 +53,9 @@ export interface CreateVendorBody {
   name: string;
   /** @minLength 4 */
   phoneNumber: string;
+  adminNumber?: string;
+  phoneNumberId?: string;
+  botNumber?: string;
   plan: Plan;
   bankName?: string;
   bankAccountNumber?: string;
@@ -61,6 +67,9 @@ export interface CreateVendorBody {
 export interface UpdateVendorBody {
   name?: string;
   phoneNumber?: string;
+  adminNumber?: string;
+  phoneNumberId?: string;
+  botNumber?: string;
   plan?: Plan;
   botEnabled?: boolean;
   bankName?: string;
@@ -117,6 +126,13 @@ export interface OrderItem {
   unitPrice: number;
 }
 
+export type PaymentStatus = (typeof PaymentStatus)[keyof typeof PaymentStatus];
+
+export const PaymentStatus = {
+  pending: "pending",
+  paid: "paid",
+} as const;
+
 export interface Order {
   id: string;
   vendorId: string;
@@ -124,6 +140,7 @@ export interface Order {
   customerPhone: string;
   customerName: string;
   status: OrderStatus;
+  paymentStatus: PaymentStatus;
   total: number;
   currency?: string;
   items: OrderItem[];
@@ -229,9 +246,10 @@ export const PaymentMethod = {
   cash: "cash",
 } as const;
 
-export type PaymentStatus = (typeof PaymentStatus)[keyof typeof PaymentStatus];
+export type PaymentStatusProperty =
+  (typeof PaymentStatusProperty)[keyof typeof PaymentStatusProperty];
 
-export const PaymentStatus = {
+export const PaymentStatusProperty = {
   pending: "pending",
   confirmed: "confirmed",
   failed: "failed",
@@ -245,7 +263,7 @@ export interface Payment {
   amount: number;
   currency?: string;
   method: PaymentMethod;
-  status: PaymentStatus;
+  status: PaymentStatusProperty;
   reference?: string | null;
   createdAt: string;
 }
@@ -336,6 +354,8 @@ export interface WebhookResponse {
   ok: boolean;
   botReply?: string | null;
   conversationId?: string | null;
+  isAdmin?: boolean;
+  adminNotification?: string | null;
 }
 
 export type ListVendorOrdersParams = {

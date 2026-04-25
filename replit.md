@@ -22,19 +22,56 @@ Shared libraries:
 
 ## Bot
 
-`artifacts/api-server/src/lib/bot.ts` handles incoming customer messages.
-Recognized intents: greeting, menu, order (parses `order <item> x<qty>`),
-paid (marks the latest confirmed order as paid), agent (hands over to a
-human and pauses bot replies for that conversation), help.
+`artifacts/api-server/src/lib/bot.ts` handles every incoming WhatsApp
+message and splits into two flows based on the sender's number:
 
-The webhook lives at `POST /api/webhook/whatsapp` and routes by the `to`
-field to the matching vendor's WhatsApp number. The simulator endpoint
-`POST /api/simulator/incoming` is the same flow but selects vendor by id.
+**Customer flow** (sender ≠ vendor's `adminNumber`):
+- greeting / `menu` → list active items
+- `order <item> x<qty>` → creates a pending order and returns an
+  `adminNotification` (forwarded to the vendor on WhatsApp)
+- `paid` → marks the latest confirmed order paid
+- `agent` / `human` → flips the conversation to `human`, alerts the admin,
+  and stops auto-replies until the admin runs `/bot`
+- `help` → command list
 
-When the operator confirms an order in the UI, the bot sends payment
-instructions (with the vendor's bank info) into the customer's chat.
-When the operator marks an order paid, a payment row is recorded and the
-customer's lifetime totals are bumped.
+**Admin flow** (sender == vendor's `adminNumber`):
+- `/help` — command list
+- `menu` — show the menu
+- `add <name> <price>` / `remove <name>` — manage menu items
+- `orders` — list pending orders
+- `confirm [id]` / `reject [id]` — confirm or reject (defaults to latest)
+- `paid [id]` — mark an order as paid (also notifies the customer)
+- `/human <phone>` — manually take over a customer chat
+- `/bot [phone]` — return that chat (or every chat) to bot mode
+
+### Webhooks & routing
+
+- `GET /api/webhook/messages` — Meta verification handshake using the
+  `VERIFY_TOKEN` env var.
+- `POST /api/webhook/messages` — Meta inbound payload. Routes to a vendor
+  by the `metadata.phone_number_id` and always responds 200 immediately.
+- `POST /api/webhook/whatsapp` — legacy/internal endpoint; matches vendor
+  by `phoneNumber` or `phoneNumberId`.
+- `POST /api/simulator/incoming` — selects vendor by id (used by the
+  in-app simulator page).
+
+Outbound WhatsApp messages go through `lib/whatsapp.ts`. If the
+`WHATSAPP_ACCESS_TOKEN` env var is unset the function logs the payload
+and returns `null` (stub mode for free-tier development).
+
+### Plan gating
+
+`lib/plans.ts → hasFeature(plan, feature)` gates `analytics`,
+`customer_memory`, and `broadcasts` to the Pro plan. The UI mirrors this
+on the analytics and customers pages.
+
+### Vendor WhatsApp config (per vendor)
+
+- `phoneNumber` — the business number customers see.
+- `botNumber` — display number for the bot (usually the same).
+- `adminNumber` — the vendor's personal WhatsApp; sender of admin
+  commands and recipient of order alerts.
+- `phoneNumberId` — Meta WhatsApp Cloud API id used to route webhooks.
 
 ## Plans
 

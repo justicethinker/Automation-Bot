@@ -36,6 +36,9 @@ router.post("/vendors", async (req, res) => {
       .values({
         name: data.name,
         phoneNumber: data.phoneNumber,
+        adminNumber: data.adminNumber ?? null,
+        phoneNumberId: data.phoneNumberId ?? null,
+        botNumber: data.botNumber ?? null,
         plan: data.plan,
         currency: data.currency ?? "USD",
         bankName: data.bankName ?? null,
@@ -137,6 +140,9 @@ router.patch("/vendors/:vendorId", async (req, res) => {
   for (const k of [
     "name",
     "phoneNumber",
+    "adminNumber",
+    "phoneNumberId",
+    "botNumber",
     "plan",
     "botEnabled",
     "bankName",

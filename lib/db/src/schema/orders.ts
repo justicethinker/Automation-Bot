@@ -22,6 +22,7 @@ export const ordersTable = pgTable("orders", {
   customerPhone: text("customer_phone").notNull(),
   customerName: text("customer_name").notNull(),
   status: text("status").notNull().default("pending"),
+  paymentStatus: text("payment_status").notNull().default("pending"),
   total: numeric("total", { precision: 12, scale: 2 }).notNull(),
   currency: text("currency").notNull().default("USD"),
   items: jsonb("items").$type<OrderItemJson[]>().notNull(),

@@ -13,6 +13,9 @@ export function toVendor(row: VendorRow) {
     id: row.id,
     name: row.name,
     phoneNumber: row.phoneNumber,
+    adminNumber: row.adminNumber,
+    phoneNumberId: row.phoneNumberId,
+    botNumber: row.botNumber,
     plan: row.plan as "starter" | "pro",
     botEnabled: row.botEnabled,
     bankName: row.bankName,
@@ -50,6 +53,7 @@ export function toOrder(row: OrderRow, vendorName?: string) {
       | "paid"
       | "rejected"
       | "completed",
+    paymentStatus: row.paymentStatus as "pending" | "paid",
     total: Number(row.total),
     currency: row.currency,
     items: row.items,

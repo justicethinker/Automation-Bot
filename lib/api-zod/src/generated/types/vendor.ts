@@ -11,6 +11,9 @@ export interface Vendor {
   id: string;
   name: string;
   phoneNumber: string;
+  adminNumber?: string | null;
+  phoneNumberId?: string | null;
+  botNumber?: string | null;
   plan: Plan;
   botEnabled: boolean;
   bankName?: string | null;

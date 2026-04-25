@@ -68,6 +68,9 @@ export const ListVendorsResponseItem = zod.object({
   id: zod.string(),
   name: zod.string(),
   phoneNumber: zod.string(),
+  adminNumber: zod.string().nullish(),
+  phoneNumberId: zod.string().nullish(),
+  botNumber: zod.string().nullish(),
   plan: zod.enum(["starter", "pro"]),
   botEnabled: zod.boolean(),
   bankName: zod.string().nullish(),
@@ -88,6 +91,9 @@ export const createVendorBodyPhoneNumberMin = 4;
 export const CreateVendorBody = zod.object({
   name: zod.string().min(1),
   phoneNumber: zod.string().min(createVendorBodyPhoneNumberMin),
+  adminNumber: zod.string().optional(),
+  phoneNumberId: zod.string().optional(),
+  botNumber: zod.string().optional(),
   plan: zod.enum(["starter", "pro"]),
   bankName: zod.string().optional(),
   bankAccountNumber: zod.string().optional(),
@@ -108,6 +114,9 @@ export const GetVendorResponse = zod
     id: zod.string(),
     name: zod.string(),
     phoneNumber: zod.string(),
+    adminNumber: zod.string().nullish(),
+    phoneNumberId: zod.string().nullish(),
+    botNumber: zod.string().nullish(),
     plan: zod.enum(["starter", "pro"]),
     botEnabled: zod.boolean(),
     bankName: zod.string().nullish(),
@@ -142,6 +151,9 @@ export const UpdateVendorParams = zod.object({
 export const UpdateVendorBody = zod.object({
   name: zod.string().optional(),
   phoneNumber: zod.string().optional(),
+  adminNumber: zod.string().optional(),
+  phoneNumberId: zod.string().optional(),
+  botNumber: zod.string().optional(),
   plan: zod.enum(["starter", "pro"]).optional(),
   botEnabled: zod.boolean().optional(),
   bankName: zod.string().optional(),
@@ -155,6 +167,9 @@ export const UpdateVendorResponse = zod.object({
   id: zod.string(),
   name: zod.string(),
   phoneNumber: zod.string(),
+  adminNumber: zod.string().nullish(),
+  phoneNumberId: zod.string().nullish(),
+  botNumber: zod.string().nullish(),
   plan: zod.enum(["starter", "pro"]),
   botEnabled: zod.boolean(),
   bankName: zod.string().nullish(),
@@ -263,6 +278,7 @@ export const ListVendorOrdersResponseItem = zod.object({
   customerPhone: zod.string(),
   customerName: zod.string(),
   status: zod.enum(["pending", "confirmed", "paid", "rejected", "completed"]),
+  paymentStatus: zod.enum(["pending", "paid"]),
   total: zod.number(),
   currency: zod.string().optional(),
   items: zod.array(
@@ -291,6 +307,7 @@ export const GetOrderResponse = zod.object({
   customerPhone: zod.string(),
   customerName: zod.string(),
   status: zod.enum(["pending", "confirmed", "paid", "rejected", "completed"]),
+  paymentStatus: zod.enum(["pending", "paid"]),
   total: zod.number(),
   currency: zod.string().optional(),
   items: zod.array(
@@ -323,6 +340,7 @@ export const UpdateOrderStatusResponse = zod.object({
   customerPhone: zod.string(),
   customerName: zod.string(),
   status: zod.enum(["pending", "confirmed", "paid", "rejected", "completed"]),
+  paymentStatus: zod.enum(["pending", "paid"]),
   total: zod.number(),
   currency: zod.string().optional(),
   items: zod.array(
@@ -520,6 +538,8 @@ export const WhatsappWebhookResponse = zod.object({
   ok: zod.boolean(),
   botReply: zod.string().nullish(),
   conversationId: zod.string().nullish(),
+  isAdmin: zod.boolean().optional(),
+  adminNotification: zod.string().nullish(),
 });
 
 /**
@@ -536,4 +556,6 @@ export const SimulateIncomingMessageResponse = zod.object({
   ok: zod.boolean(),
   botReply: zod.string().nullish(),
   conversationId: zod.string().nullish(),
+  isAdmin: zod.boolean().optional(),
+  adminNotification: zod.string().nullish(),
 });

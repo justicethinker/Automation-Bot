@@ -455,6 +455,9 @@ components:
         id: { type: string }
         name: { type: string }
         phoneNumber: { type: string }
+        adminNumber: { type: string, nullable: true }
+        phoneNumberId: { type: string, nullable: true }
+        botNumber: { type: string, nullable: true }
         plan: { $ref: "#/components/schemas/Plan" }
         botEnabled: { type: boolean }
         bankName: { type: string, nullable: true }
@@ -500,6 +503,9 @@ components:
       properties:
         name: { type: string, minLength: 1 }
         phoneNumber: { type: string, minLength: 4 }
+        adminNumber: { type: string }
+        phoneNumberId: { type: string }
+        botNumber: { type: string }
         plan: { $ref: "#/components/schemas/Plan" }
         bankName: { type: string }
         bankAccountNumber: { type: string }
@@ -512,6 +518,9 @@ components:
       properties:
         name: { type: string }
         phoneNumber: { type: string }
+        adminNumber: { type: string }
+        phoneNumberId: { type: string }
+        botNumber: { type: string }
         plan: { $ref: "#/components/schemas/Plan" }
         botEnabled: { type: boolean }
         bankName: { type: string }
@@ -564,6 +573,10 @@ components:
         quantity: { type: integer, minimum: 1 }
         unitPrice: { type: number }
 
+    PaymentStatus:
+      type: string
+      enum: [pending, paid]
+
     Order:
       type: object
       required:
@@ -572,6 +585,7 @@ components:
         - customerPhone
         - customerName
         - status
+        - paymentStatus
         - total
         - items
         - createdAt
@@ -582,6 +596,7 @@ components:
         customerPhone: { type: string }
         customerName: { type: string }
         status: { $ref: "#/components/schemas/OrderStatus" }
+        paymentStatus: { $ref: "#/components/schemas/PaymentStatus" }
         total: { type: number }
         currency: { type: string }
         items:
@@ -823,3 +838,5 @@ components:
         ok: { type: boolean }
         botReply: { type: string, nullable: true }
         conversationId: { type: string, nullable: true }
+        isAdmin: { type: boolean }
+        adminNotification: { type: string, nullable: true }

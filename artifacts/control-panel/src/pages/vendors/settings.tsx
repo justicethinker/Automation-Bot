@@ -29,6 +29,9 @@ export default function VendorSettings({ vendorId }: { vendorId: string }) {
   const [form, setForm] = useState({
     name: "",
     phoneNumber: "",
+    botNumber: "",
+    adminNumber: "",
+    phoneNumberId: "",
     plan: "starter" as "starter" | "pro",
     currency: "USD",
     bankName: "",
@@ -43,6 +46,9 @@ export default function VendorSettings({ vendorId }: { vendorId: string }) {
       setForm({
         name: vendor.name,
         phoneNumber: vendor.phoneNumber,
+        botNumber: vendor.botNumber ?? "",
+        adminNumber: vendor.adminNumber ?? "",
+        phoneNumberId: vendor.phoneNumberId ?? "",
         plan: vendor.plan,
         currency: vendor.currency,
         bankName: vendor.bankName ?? "",
@@ -66,6 +72,9 @@ export default function VendorSettings({ vendorId }: { vendorId: string }) {
         data: {
           name: form.name,
           phoneNumber: form.phoneNumber,
+          botNumber: form.botNumber,
+          adminNumber: form.adminNumber,
+          phoneNumberId: form.phoneNumberId,
           plan: form.plan,
           currency: form.currency,
           bankName: form.bankName,
@@ -128,6 +137,30 @@ export default function VendorSettings({ vendorId }: { vendorId: string }) {
                 <div className="text-xs text-muted-foreground">When off, the bot stops auto-replying for every customer.</div>
               </div>
               <Switch checked={form.botEnabled} onCheckedChange={(v) => setForm({ ...form, botEnabled: v })} />
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader>
+            <CardTitle>WhatsApp routing</CardTitle>
+            <CardDescription>Bot display number, vendor admin number, and Meta IDs used to route inbound messages.</CardDescription>
+          </CardHeader>
+          <CardContent className="grid gap-4">
+            <div className="grid gap-2 md:grid-cols-2 md:gap-4">
+              <div className="grid gap-2">
+                <Label>Bot display number</Label>
+                <Input value={form.botNumber} onChange={(e) => setForm({ ...form, botNumber: e.target.value })} placeholder="+15551234567" />
+              </div>
+              <div className="grid gap-2">
+                <Label>Vendor admin number</Label>
+                <Input value={form.adminNumber} onChange={(e) => setForm({ ...form, adminNumber: e.target.value })} placeholder="+15558881111" />
+              </div>
+            </div>
+            <div className="grid gap-2">
+              <Label>Meta phone_number_id</Label>
+              <Input value={form.phoneNumberId} onChange={(e) => setForm({ ...form, phoneNumberId: e.target.value })} placeholder="100000000000001" />
+              <p className="text-xs text-muted-foreground">Webhooks from Meta are routed to this vendor by phone_number_id.</p>
             </div>
           </CardContent>
         </Card>

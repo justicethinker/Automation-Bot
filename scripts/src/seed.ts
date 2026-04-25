@@ -22,6 +22,9 @@ async function seed() {
     .values({
       name: "Sunrise Pizza",
       phoneNumber: "+15550100001",
+      botNumber: "+15550100001",
+      adminNumber: "+15558881111",
+      phoneNumberId: "100000000000001",
       plan: "pro",
       currency: "USD",
       bankName: "First National",
@@ -37,6 +40,9 @@ async function seed() {
     .values({
       name: "Cedar & Steam Coffee",
       phoneNumber: "+15550100002",
+      botNumber: "+15550100002",
+      adminNumber: "+15558882222",
+      phoneNumberId: "100000000000002",
       plan: "starter",
       currency: "USD",
       bankName: "Pacific Trust",

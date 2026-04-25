@@ -6,7 +6,7 @@
  * OpenAPI spec version: 0.1.0
  */
 import type { PaymentMethod } from "./paymentMethod";
-import type { PaymentStatus } from "./paymentStatus";
+import type { PaymentStatusProperty } from "./paymentStatusProperty";
 
 export interface Payment {
   id: string;
@@ -16,7 +16,7 @@ export interface Payment {
   amount: number;
   currency?: string;
   method: PaymentMethod;
-  status: PaymentStatus;
+  status: PaymentStatusProperty;
   reference?: string | null;
   createdAt: Date;
 }
