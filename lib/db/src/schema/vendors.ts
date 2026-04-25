@@ -20,6 +20,7 @@ export const vendorsTable = pgTable("vendors", {
   bankAccountHolder: text("bank_account_holder"),
   currency: text("currency").notNull().default("USD"),
   welcomeMessage: text("welcome_message"),
+  followUpsEnabled: boolean("follow_ups_enabled").notNull().default(false),
   createdAt: timestamp("created_at", { withTimezone: true })
     .notNull()
     .defaultNow(),

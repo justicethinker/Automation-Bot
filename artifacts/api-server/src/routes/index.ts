@@ -8,6 +8,8 @@ import customersRouter from "./customers";
 import paymentsRouter from "./payments";
 import dashboardRouter from "./dashboard";
 import webhookRouter from "./webhook";
+import promotionsRouter from "./promotions";
+import broadcastsRouter from "./broadcasts";
 
 const router: IRouter = Router();
 
@@ -20,5 +22,7 @@ router.use(customersRouter);
 router.use(paymentsRouter);
 router.use(dashboardRouter);
 router.use(webhookRouter);
+router.use(promotionsRouter);
+router.use(broadcastsRouter);
 
 export default router;

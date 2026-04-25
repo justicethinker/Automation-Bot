@@ -5,3 +5,5 @@ export * from "./conversations";
 export * from "./messages";
 export * from "./customers";
 export * from "./payments";
+export * from "./promotions";
+export * from "./broadcasts";

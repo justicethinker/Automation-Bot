@@ -15,6 +15,7 @@ export interface UpdateVendorBody {
   botNumber?: string;
   plan?: Plan;
   botEnabled?: boolean;
+  followUpsEnabled?: boolean;
   bankName?: string;
   bankAccountNumber?: string;
   bankAccountHolder?: string;

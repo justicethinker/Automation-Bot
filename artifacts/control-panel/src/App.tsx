@@ -15,6 +15,8 @@ import VendorConversations from "@/pages/vendors/conversations";
 import VendorCustomers from "@/pages/vendors/customers";
 import VendorPayments from "@/pages/vendors/payments";
 import VendorAnalytics from "@/pages/vendors/analytics";
+import VendorPromotions from "@/pages/vendors/promotions";
+import VendorBroadcasts from "@/pages/vendors/broadcasts";
 import VendorSettings from "@/pages/vendors/settings";
 import Simulator from "@/pages/simulator";
 
@@ -40,6 +42,8 @@ function Router() {
       <Route path="/vendors/:vendorId/customers" component={() => <VendorPage>{(id) => <VendorCustomers vendorId={id} />}</VendorPage>} />
       <Route path="/vendors/:vendorId/payments" component={() => <VendorPage>{(id) => <VendorPayments vendorId={id} />}</VendorPage>} />
       <Route path="/vendors/:vendorId/analytics" component={() => <VendorPage>{(id) => <VendorAnalytics vendorId={id} />}</VendorPage>} />
+      <Route path="/vendors/:vendorId/promotions" component={() => <VendorPage>{(id) => <VendorPromotions vendorId={id} />}</VendorPage>} />
+      <Route path="/vendors/:vendorId/broadcasts" component={() => <VendorPage>{(id) => <VendorBroadcasts vendorId={id} />}</VendorPage>} />
       <Route path="/vendors/:vendorId/settings" component={() => <VendorPage>{(id) => <VendorSettings vendorId={id} />}</VendorPage>} />
       <Route path="/simulator" component={() => <AppLayout><Simulator /></AppLayout>} />
       <Route component={NotFound} />

@@ -30,6 +30,7 @@ export interface Vendor {
   bankAccountHolder?: string | null;
   currency?: string;
   welcomeMessage?: string | null;
+  followUpsEnabled?: boolean;
   createdAt: string;
 }
 
@@ -72,6 +73,7 @@ export interface UpdateVendorBody {
   botNumber?: string;
   plan?: Plan;
   botEnabled?: boolean;
+  followUpsEnabled?: boolean;
   bankName?: string;
   bankAccountNumber?: string;
   bankAccountHolder?: string;
@@ -356,6 +358,52 @@ export interface WebhookResponse {
   conversationId?: string | null;
   isAdmin?: boolean;
   adminNotification?: string | null;
+}
+
+export interface Promotion {
+  id: string;
+  vendorId: string;
+  title: string;
+  description?: string | null;
+  active: boolean;
+  createdAt: string;
+}
+
+export interface CreatePromotionBody {
+  /** @minLength 1 */
+  title: string;
+  description?: string;
+  active?: boolean;
+}
+
+export interface UpdatePromotionBody {
+  /** @minLength 1 */
+  title?: string;
+  description?: string;
+  active?: boolean;
+}
+
+export interface Broadcast {
+  id: string;
+  vendorId: string;
+  message: string;
+  recipientCount: number;
+  sentAt: string;
+}
+
+export interface CreateBroadcastBody {
+  /** @minLength 1 */
+  message: string;
+  /**
+   * Only customers seen in the last N days. Default 30.
+   * @minimum 1
+   */
+  sinceDays?: number;
+}
+
+export interface FollowUpResult {
+  reminded: number;
+  broadcastId: string | null;
 }
 
 export type ListVendorOrdersParams = {

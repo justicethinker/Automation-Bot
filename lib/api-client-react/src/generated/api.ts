@@ -18,12 +18,16 @@ import type {
 
 import type {
   ActivityItem,
+  Broadcast,
   Conversation,
   ConversationDetail,
+  CreateBroadcastBody,
   CreateMenuItemBody,
+  CreatePromotionBody,
   CreateVendorBody,
   Customer,
   DashboardSummary,
+  FollowUpResult,
   HealthStatus,
   ListVendorOrdersParams,
   MenuItem,
@@ -31,11 +35,13 @@ import type {
   Order,
   OrderDetail,
   Payment,
+  Promotion,
   SendMessageBody,
   SimulateIncomingBody,
   UpdateConversationBody,
   UpdateMenuItemBody,
   UpdateOrderBody,
+  UpdatePromotionBody,
   UpdateVendorBody,
   Vendor,
   VendorAnalytics,
@@ -1946,6 +1952,644 @@ export function useGetVendorAnalytics<
 
   return { ...query, queryKey: queryOptions.queryKey };
 }
+
+/**
+ * @summary List promotions for a vendor
+ */
+export const getListVendorPromotionsUrl = (vendorId: string) => {
+  return `/api/vendors/${vendorId}/promotions`;
+};
+
+export const listVendorPromotions = async (
+  vendorId: string,
+  options?: RequestInit,
+): Promise<Promotion[]> => {
+  return customFetch<Promotion[]>(getListVendorPromotionsUrl(vendorId), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getListVendorPromotionsQueryKey = (vendorId: string) => {
+  return [`/api/vendors/${vendorId}/promotions`] as const;
+};
+
+export const getListVendorPromotionsQueryOptions = <
+  TData = Awaited<ReturnType<typeof listVendorPromotions>>,
+  TError = ErrorType<unknown>,
+>(
+  vendorId: string,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof listVendorPromotions>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ?? getListVendorPromotionsQueryKey(vendorId);
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof listVendorPromotions>>
+  > = ({ signal }) =>
+    listVendorPromotions(vendorId, { signal, ...requestOptions });
+
+  return {
+    queryKey,
+    queryFn,
+    enabled: !!vendorId,
+    ...queryOptions,
+  } as UseQueryOptions<
+    Awaited<ReturnType<typeof listVendorPromotions>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type ListVendorPromotionsQueryResult = NonNullable<
+  Awaited<ReturnType<typeof listVendorPromotions>>
+>;
+export type ListVendorPromotionsQueryError = ErrorType<unknown>;
+
+/**
+ * @summary List promotions for a vendor
+ */
+
+export function useListVendorPromotions<
+  TData = Awaited<ReturnType<typeof listVendorPromotions>>,
+  TError = ErrorType<unknown>,
+>(
+  vendorId: string,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof listVendorPromotions>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getListVendorPromotionsQueryOptions(vendorId, options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary Create a promotion (Pro feature)
+ */
+export const getCreateVendorPromotionUrl = (vendorId: string) => {
+  return `/api/vendors/${vendorId}/promotions`;
+};
+
+export const createVendorPromotion = async (
+  vendorId: string,
+  createPromotionBody: CreatePromotionBody,
+  options?: RequestInit,
+): Promise<Promotion> => {
+  return customFetch<Promotion>(getCreateVendorPromotionUrl(vendorId), {
+    ...options,
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...options?.headers },
+    body: JSON.stringify(createPromotionBody),
+  });
+};
+
+export const getCreateVendorPromotionMutationOptions = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof createVendorPromotion>>,
+    TError,
+    { vendorId: string; data: BodyType<CreatePromotionBody> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof createVendorPromotion>>,
+  TError,
+  { vendorId: string; data: BodyType<CreatePromotionBody> },
+  TContext
+> => {
+  const mutationKey = ["createVendorPromotion"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof createVendorPromotion>>,
+    { vendorId: string; data: BodyType<CreatePromotionBody> }
+  > = (props) => {
+    const { vendorId, data } = props ?? {};
+
+    return createVendorPromotion(vendorId, data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type CreateVendorPromotionMutationResult = NonNullable<
+  Awaited<ReturnType<typeof createVendorPromotion>>
+>;
+export type CreateVendorPromotionMutationBody = BodyType<CreatePromotionBody>;
+export type CreateVendorPromotionMutationError = ErrorType<unknown>;
+
+/**
+ * @summary Create a promotion (Pro feature)
+ */
+export const useCreateVendorPromotion = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof createVendorPromotion>>,
+    TError,
+    { vendorId: string; data: BodyType<CreatePromotionBody> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof createVendorPromotion>>,
+  TError,
+  { vendorId: string; data: BodyType<CreatePromotionBody> },
+  TContext
+> => {
+  return useMutation(getCreateVendorPromotionMutationOptions(options));
+};
+
+/**
+ * @summary Update a promotion
+ */
+export const getUpdateVendorPromotionUrl = (
+  vendorId: string,
+  promotionId: string,
+) => {
+  return `/api/vendors/${vendorId}/promotions/${promotionId}`;
+};
+
+export const updateVendorPromotion = async (
+  vendorId: string,
+  promotionId: string,
+  updatePromotionBody: UpdatePromotionBody,
+  options?: RequestInit,
+): Promise<Promotion> => {
+  return customFetch<Promotion>(
+    getUpdateVendorPromotionUrl(vendorId, promotionId),
+    {
+      ...options,
+      method: "PATCH",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(updatePromotionBody),
+    },
+  );
+};
+
+export const getUpdateVendorPromotionMutationOptions = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof updateVendorPromotion>>,
+    TError,
+    {
+      vendorId: string;
+      promotionId: string;
+      data: BodyType<UpdatePromotionBody>;
+    },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof updateVendorPromotion>>,
+  TError,
+  {
+    vendorId: string;
+    promotionId: string;
+    data: BodyType<UpdatePromotionBody>;
+  },
+  TContext
+> => {
+  const mutationKey = ["updateVendorPromotion"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof updateVendorPromotion>>,
+    {
+      vendorId: string;
+      promotionId: string;
+      data: BodyType<UpdatePromotionBody>;
+    }
+  > = (props) => {
+    const { vendorId, promotionId, data } = props ?? {};
+
+    return updateVendorPromotion(vendorId, promotionId, data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type UpdateVendorPromotionMutationResult = NonNullable<
+  Awaited<ReturnType<typeof updateVendorPromotion>>
+>;
+export type UpdateVendorPromotionMutationBody = BodyType<UpdatePromotionBody>;
+export type UpdateVendorPromotionMutationError = ErrorType<unknown>;
+
+/**
+ * @summary Update a promotion
+ */
+export const useUpdateVendorPromotion = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof updateVendorPromotion>>,
+    TError,
+    {
+      vendorId: string;
+      promotionId: string;
+      data: BodyType<UpdatePromotionBody>;
+    },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof updateVendorPromotion>>,
+  TError,
+  {
+    vendorId: string;
+    promotionId: string;
+    data: BodyType<UpdatePromotionBody>;
+  },
+  TContext
+> => {
+  return useMutation(getUpdateVendorPromotionMutationOptions(options));
+};
+
+/**
+ * @summary Delete a promotion
+ */
+export const getDeleteVendorPromotionUrl = (
+  vendorId: string,
+  promotionId: string,
+) => {
+  return `/api/vendors/${vendorId}/promotions/${promotionId}`;
+};
+
+export const deleteVendorPromotion = async (
+  vendorId: string,
+  promotionId: string,
+  options?: RequestInit,
+): Promise<void> => {
+  return customFetch<void>(getDeleteVendorPromotionUrl(vendorId, promotionId), {
+    ...options,
+    method: "DELETE",
+  });
+};
+
+export const getDeleteVendorPromotionMutationOptions = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof deleteVendorPromotion>>,
+    TError,
+    { vendorId: string; promotionId: string },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof deleteVendorPromotion>>,
+  TError,
+  { vendorId: string; promotionId: string },
+  TContext
+> => {
+  const mutationKey = ["deleteVendorPromotion"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof deleteVendorPromotion>>,
+    { vendorId: string; promotionId: string }
+  > = (props) => {
+    const { vendorId, promotionId } = props ?? {};
+
+    return deleteVendorPromotion(vendorId, promotionId, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type DeleteVendorPromotionMutationResult = NonNullable<
+  Awaited<ReturnType<typeof deleteVendorPromotion>>
+>;
+
+export type DeleteVendorPromotionMutationError = ErrorType<unknown>;
+
+/**
+ * @summary Delete a promotion
+ */
+export const useDeleteVendorPromotion = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof deleteVendorPromotion>>,
+    TError,
+    { vendorId: string; promotionId: string },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof deleteVendorPromotion>>,
+  TError,
+  { vendorId: string; promotionId: string },
+  TContext
+> => {
+  return useMutation(getDeleteVendorPromotionMutationOptions(options));
+};
+
+/**
+ * @summary List past broadcasts
+ */
+export const getListVendorBroadcastsUrl = (vendorId: string) => {
+  return `/api/vendors/${vendorId}/broadcasts`;
+};
+
+export const listVendorBroadcasts = async (
+  vendorId: string,
+  options?: RequestInit,
+): Promise<Broadcast[]> => {
+  return customFetch<Broadcast[]>(getListVendorBroadcastsUrl(vendorId), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getListVendorBroadcastsQueryKey = (vendorId: string) => {
+  return [`/api/vendors/${vendorId}/broadcasts`] as const;
+};
+
+export const getListVendorBroadcastsQueryOptions = <
+  TData = Awaited<ReturnType<typeof listVendorBroadcasts>>,
+  TError = ErrorType<unknown>,
+>(
+  vendorId: string,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof listVendorBroadcasts>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ?? getListVendorBroadcastsQueryKey(vendorId);
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof listVendorBroadcasts>>
+  > = ({ signal }) =>
+    listVendorBroadcasts(vendorId, { signal, ...requestOptions });
+
+  return {
+    queryKey,
+    queryFn,
+    enabled: !!vendorId,
+    ...queryOptions,
+  } as UseQueryOptions<
+    Awaited<ReturnType<typeof listVendorBroadcasts>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type ListVendorBroadcastsQueryResult = NonNullable<
+  Awaited<ReturnType<typeof listVendorBroadcasts>>
+>;
+export type ListVendorBroadcastsQueryError = ErrorType<unknown>;
+
+/**
+ * @summary List past broadcasts
+ */
+
+export function useListVendorBroadcasts<
+  TData = Awaited<ReturnType<typeof listVendorBroadcasts>>,
+  TError = ErrorType<unknown>,
+>(
+  vendorId: string,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof listVendorBroadcasts>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getListVendorBroadcastsQueryOptions(vendorId, options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary Send a broadcast to recent customers (Pro feature)
+ */
+export const getSendVendorBroadcastUrl = (vendorId: string) => {
+  return `/api/vendors/${vendorId}/broadcasts`;
+};
+
+export const sendVendorBroadcast = async (
+  vendorId: string,
+  createBroadcastBody: CreateBroadcastBody,
+  options?: RequestInit,
+): Promise<Broadcast> => {
+  return customFetch<Broadcast>(getSendVendorBroadcastUrl(vendorId), {
+    ...options,
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...options?.headers },
+    body: JSON.stringify(createBroadcastBody),
+  });
+};
+
+export const getSendVendorBroadcastMutationOptions = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof sendVendorBroadcast>>,
+    TError,
+    { vendorId: string; data: BodyType<CreateBroadcastBody> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof sendVendorBroadcast>>,
+  TError,
+  { vendorId: string; data: BodyType<CreateBroadcastBody> },
+  TContext
+> => {
+  const mutationKey = ["sendVendorBroadcast"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof sendVendorBroadcast>>,
+    { vendorId: string; data: BodyType<CreateBroadcastBody> }
+  > = (props) => {
+    const { vendorId, data } = props ?? {};
+
+    return sendVendorBroadcast(vendorId, data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type SendVendorBroadcastMutationResult = NonNullable<
+  Awaited<ReturnType<typeof sendVendorBroadcast>>
+>;
+export type SendVendorBroadcastMutationBody = BodyType<CreateBroadcastBody>;
+export type SendVendorBroadcastMutationError = ErrorType<unknown>;
+
+/**
+ * @summary Send a broadcast to recent customers (Pro feature)
+ */
+export const useSendVendorBroadcast = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof sendVendorBroadcast>>,
+    TError,
+    { vendorId: string; data: BodyType<CreateBroadcastBody> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof sendVendorBroadcast>>,
+  TError,
+  { vendorId: string; data: BodyType<CreateBroadcastBody> },
+  TContext
+> => {
+  return useMutation(getSendVendorBroadcastMutationOptions(options));
+};
+
+/**
+ * @summary Send follow-up reminders to customers with stalled orders (Pro feature)
+ */
+export const getRunVendorFollowUpsUrl = (vendorId: string) => {
+  return `/api/vendors/${vendorId}/follow-ups/run`;
+};
+
+export const runVendorFollowUps = async (
+  vendorId: string,
+  options?: RequestInit,
+): Promise<FollowUpResult> => {
+  return customFetch<FollowUpResult>(getRunVendorFollowUpsUrl(vendorId), {
+    ...options,
+    method: "POST",
+  });
+};
+
+export const getRunVendorFollowUpsMutationOptions = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof runVendorFollowUps>>,
+    TError,
+    { vendorId: string },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof runVendorFollowUps>>,
+  TError,
+  { vendorId: string },
+  TContext
+> => {
+  const mutationKey = ["runVendorFollowUps"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof runVendorFollowUps>>,
+    { vendorId: string }
+  > = (props) => {
+    const { vendorId } = props ?? {};
+
+    return runVendorFollowUps(vendorId, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type RunVendorFollowUpsMutationResult = NonNullable<
+  Awaited<ReturnType<typeof runVendorFollowUps>>
+>;
+
+export type RunVendorFollowUpsMutationError = ErrorType<unknown>;
+
+/**
+ * @summary Send follow-up reminders to customers with stalled orders (Pro feature)
+ */
+export const useRunVendorFollowUps = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof runVendorFollowUps>>,
+    TError,
+    { vendorId: string },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof runVendorFollowUps>>,
+  TError,
+  { vendorId: string },
+  TContext
+> => {
+  return useMutation(getRunVendorFollowUpsMutationOptions(options));
+};
 
 /**
  * @summary Inbound WhatsApp webhook (single endpoint, all vendors)

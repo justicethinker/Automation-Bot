@@ -3,6 +3,7 @@ import {
   vendorsTable,
   type VendorRow,
   menuItemsTable,
+  type MenuItemRow,
   ordersTable,
   type OrderItemJson,
   type OrderRow,
@@ -11,9 +12,12 @@ import {
   messagesTable,
   customersTable,
   paymentsTable,
+  promotionsTable,
+  broadcastsTable,
 } from "@workspace/db";
-import { and, eq, sql, desc } from "drizzle-orm";
+import { and, eq, sql, desc, gte } from "drizzle-orm";
 import { sendWhatsAppMessage } from "./whatsapp";
+import { hasFeature } from "./plans";
 
 export type IncomingResult = {
   conversation: ConversationRow | null;
@@ -56,8 +60,10 @@ function formatMoney(amount: number, currency: string): string {
   }
 }
 
-async function buildMenuMessage(vendor: VendorRow): Promise<string> {
-  const items = await db
+// Returns active menu items in a stable order so the *number* shown to the
+// customer in the menu and the *number* they reply with always line up.
+async function listActiveMenuItems(vendor: VendorRow): Promise<MenuItemRow[]> {
+  return db
     .select()
     .from(menuItemsTable)
     .where(
@@ -65,50 +71,128 @@ async function buildMenuMessage(vendor: VendorRow): Promise<string> {
         eq(menuItemsTable.vendorId, vendor.id),
         eq(menuItemsTable.available, true),
       ),
-    );
+    )
+    .orderBy(menuItemsTable.category, menuItemsTable.createdAt);
+}
+
+async function listActivePromotions(vendor: VendorRow) {
+  return db
+    .select()
+    .from(promotionsTable)
+    .where(
+      and(
+        eq(promotionsTable.vendorId, vendor.id),
+        eq(promotionsTable.active, true),
+      ),
+    )
+    .orderBy(desc(promotionsTable.createdAt))
+    .limit(3);
+}
+
+async function buildMenuMessage(vendor: VendorRow): Promise<string> {
+  const items = await listActiveMenuItems(vendor);
 
   if (items.length === 0) {
     return `Our menu is being updated. Please check back soon.`;
   }
 
-  const grouped: Record<string, typeof items> = {};
-  for (const item of items) {
-    const key = item.category ?? "Menu";
-    grouped[key] ??= [];
-    grouped[key].push(item);
-  }
+  const promos = await listActivePromotions(vendor);
 
   const lines: string[] = [`*${vendor.name} — Menu*`, ""];
-  for (const [cat, list] of Object.entries(grouped)) {
-    lines.push(`*${cat}*`);
-    for (const item of list) {
+
+  if (promos.length > 0) {
+    lines.push(`*Today's offers*`);
+    for (const p of promos) {
       lines.push(
-        `- ${item.name} — ${formatMoney(Number(item.price), vendor.currency)}`,
+        p.description ? `- ${p.title}: ${p.description}` : `- ${p.title}`,
       );
     }
     lines.push("");
   }
+
+  // Numbered list. Numbers are global (1..N) so customers can always reply
+  // with just a number regardless of category.
+  let n = 1;
+  let currentCat: string | null = null;
+  for (const item of items) {
+    const cat = item.category ?? "Menu";
+    if (cat !== currentCat) {
+      if (currentCat !== null) lines.push("");
+      lines.push(`*${cat}*`);
+      currentCat = cat;
+    }
+    lines.push(
+      `${n}. ${item.name} — ${formatMoney(Number(item.price), vendor.currency)}`,
+    );
+    n++;
+  }
+  lines.push("");
+  lines.push(`Reply with the number of what you want.`);
   lines.push(
-    `Reply with *order <item> x<qty>* (e.g. "order Margherita x2") to place an order.`,
+    `For multiple items: *1, 3x2, 5* (item 1, two of item 3, item 5).`,
   );
   return lines.join("\n");
 }
 
-function parseOrderLine(
-  body: string,
-): Array<{ name: string; quantity: number }> {
+// Parse what the customer wants. Supports:
+//   "1"               -> 1× item #1
+//   "1x2"  /  "1 x 2" -> 2× item #1
+//   "1, 3x2, 5"       -> mixed
+//   "order margherita x2"  -> by name (legacy)
+//   "2 margherita"    -> 2× margherita (qty-first)
+type ParsedItem =
+  | { kind: "number"; index: number; quantity: number }
+  | { kind: "name"; name: string; quantity: number };
+
+function parseOrderLine(body: string): ParsedItem[] {
   const text = body.replace(/^order\s+/i, "").trim();
   if (!text) return [];
-  const parts = text.split(/[,;]| and /i).map((s) => s.trim()).filter(Boolean);
-  const result: Array<{ name: string; quantity: number }> = [];
+  const parts = text
+    .split(/[,;\n]| and /i)
+    .map((s) => s.trim())
+    .filter(Boolean);
+  const result: ParsedItem[] = [];
   for (const part of parts) {
-    const match = part.match(/^(.*?)(?:\s*[x×]\s*(\d+))?$/i);
-    if (!match) continue;
-    const name = match[1]!.trim();
-    const qty = match[2] ? parseInt(match[2], 10) : 1;
-    if (name) result.push({ name, quantity: qty });
+    // Pure number forms: "3", "3x2", "3 x 2", "3*2"
+    const numMatch = part.match(/^(\d+)\s*(?:[x×*]\s*(\d+))?$/i);
+    if (numMatch) {
+      const index = parseInt(numMatch[1]!, 10);
+      const qty = numMatch[2] ? parseInt(numMatch[2]!, 10) : 1;
+      if (index > 0 && qty > 0) {
+        result.push({ kind: "number", index, quantity: qty });
+        continue;
+      }
+    }
+    // "<qty> <name>" e.g. "2 margherita"
+    const qtyFirst = part.match(/^(\d+)\s+(.+)$/);
+    if (qtyFirst) {
+      const qty = parseInt(qtyFirst[1]!, 10);
+      const name = qtyFirst[2]!.trim();
+      if (qty > 0 && name) {
+        result.push({ kind: "name", name, quantity: qty });
+        continue;
+      }
+    }
+    // "<name> x<qty>" or just "<name>"
+    const nameMatch = part.match(/^(.*?)(?:\s*[x×*]\s*(\d+))?$/i);
+    if (nameMatch) {
+      const name = nameMatch[1]!.trim();
+      const qty = nameMatch[2] ? parseInt(nameMatch[2]!, 10) : 1;
+      if (name && qty > 0) result.push({ kind: "name", name, quantity: qty });
+    }
   }
   return result;
+}
+
+// Detects "order intent" without false positives on chit-chat.
+// Triggers on: explicit "order" prefix, anything that looks like a number-pick
+// ("1", "1x2", "1,2,3"), or qty markers ("x2").
+function looksLikeOrder(body: string): boolean {
+  const trimmed = body.trim();
+  if (startsWithAny(trimmed, orderTriggers)) return true;
+  if (/^[\d, x×*]+$/i.test(trimmed)) return true;
+  if (/\b[x×]\s?\d+\b/i.test(trimmed)) return true;
+  return false;
 }
 
 function paymentInstructions(vendor: VendorRow, total: number): string {
@@ -311,7 +395,8 @@ async function computeBotReply(
       text: [
         `I can help you with:`,
         `- *menu* — see what's available`,
-        `- *order <item> x<qty>* — place an order`,
+        `- reply with a *number* (e.g. "1") to order an item`,
+        `- *1, 3x2, 5* to order multiple items at once`,
         `- *paid* — confirm a payment`,
         `- *agent* — talk to a human`,
       ].join("\n"),
@@ -347,39 +432,49 @@ async function computeBotReply(
     };
   }
 
-  // Order detection
-  if (
-    startsWithAny(body, orderTriggers) ||
-    /\bx\s?\d+\b/i.test(body) ||
-    /\b\d+\s+\w+/i.test(body.trim())
-  ) {
+  // Order detection (number picks, "order <name>", "<qty> <name>", etc.)
+  if (looksLikeOrder(body)) {
     const requested = parseOrderLine(body);
     if (requested.length === 0) {
       return {
-        text: `I didn't catch that. Try: *order <item> x<qty>* — for example "order Margherita x2".`,
+        text: `I didn't catch that. Reply *menu* to see the list, then send the number(s) you want — e.g. "1" or "1, 3x2, 5".`,
         handover: false,
       };
     }
-    const allItems = await db
-      .select()
-      .from(menuItemsTable)
-      .where(
-        and(
-          eq(menuItemsTable.vendorId, vendor.id),
-          eq(menuItemsTable.available, true),
-        ),
-      );
+    const allItems = await listActiveMenuItems(vendor);
+    if (allItems.length === 0) {
+      return {
+        text: `Our menu is being updated. Please check back soon.`,
+        handover: false,
+      };
+    }
     const matched: OrderItemJson[] = [];
     const missing: string[] = [];
     for (const r of requested) {
-      const found = allItems.find(
-        (m) => m.name.toLowerCase() === r.name.toLowerCase(),
-      ) ??
-        allItems.find((m) =>
-          m.name.toLowerCase().includes(r.name.toLowerCase()),
-        );
-      if (!found) {
-        missing.push(r.name);
+      let found: MenuItemRow | undefined;
+      if (r.kind === "number") {
+        found = allItems[r.index - 1];
+        if (!found) {
+          missing.push(`#${r.index}`);
+          continue;
+        }
+      } else {
+        found =
+          allItems.find(
+            (m) => m.name.toLowerCase() === r.name.toLowerCase(),
+          ) ??
+          allItems.find((m) =>
+            m.name.toLowerCase().includes(r.name.toLowerCase()),
+          );
+        if (!found) {
+          missing.push(r.name);
+          continue;
+        }
+      }
+      // Combine duplicates (e.g. "1, 1x2" -> 3× item #1)
+      const existing = matched.find((m) => m.name === found!.name);
+      if (existing) {
+        existing.quantity += r.quantity;
       } else {
         matched.push({
           name: found.name,
@@ -572,6 +667,7 @@ export async function handleAdminCommand(
 
   // /help
   if (lower === "/help" || lower === "help" || lower === "?") {
+    const proLine = vendor.plan === "pro" ? "" : " (Pro plan only)";
     return {
       text: [
         `*Vendor commands*`,
@@ -584,7 +680,163 @@ export async function handleAdminCommand(
         `- *paid [id]* — mark order as paid`,
         `- */bot [phone]* — return to bot mode (all chats or one)`,
         `- */human <phone>* — take a chat over manually`,
+        ``,
+        `*Pro features*${proLine}`,
+        `- */promo add <text>* — add a promotion shown with the menu`,
+        `- */promo list* — see active promotions`,
+        `- */promo off* — disable all promotions`,
+        `- */broadcast <message>* — send to recent customers`,
+        `- */followups on|off|run* — auto reminders for unpaid orders`,
       ].join("\n"),
+    };
+  }
+
+  // ── Pro: /broadcast <message> ────────────────────────────────────────────
+  if (lower === "/broadcast" || lower.startsWith("/broadcast ")) {
+    if (!hasFeature(vendor, "broadcasts")) {
+      return {
+        text: `Broadcasts are a Pro feature. Upgrade ${vendor.name} to Pro in the control panel to send messages to your customers.`,
+      };
+    }
+    const message = body.slice("/broadcast".length).trim();
+    if (!message) return { text: `Usage: */broadcast <message>*` };
+    const since = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+    const recipients = await db
+      .select({ phone: customersTable.phone })
+      .from(customersTable)
+      .where(
+        and(
+          eq(customersTable.vendorId, vendor.id),
+          gte(customersTable.lastSeenAt, since),
+        ),
+      );
+    for (const r of recipients) {
+      await sendWhatsAppMessage({
+        phoneNumberId: vendor.phoneNumberId,
+        to: r.phone,
+        text: message,
+      });
+    }
+    await db.insert(broadcastsTable).values({
+      vendorId: vendor.id,
+      message,
+      recipientCount: recipients.length,
+    });
+    return {
+      text: `Broadcast sent to ${recipients.length} customer${recipients.length === 1 ? "" : "s"} (active in the last 30 days).`,
+    };
+  }
+
+  // ── Pro: /promo add | list | off ─────────────────────────────────────────
+  if (lower === "/promo" || lower.startsWith("/promo ")) {
+    if (!hasFeature(vendor, "promotions")) {
+      return {
+        text: `Promotions are a Pro feature. Upgrade ${vendor.name} to Pro in the control panel.`,
+      };
+    }
+    const rest = body.slice("/promo".length).trim();
+    if (!rest || rest === "list") {
+      const promos = await db
+        .select()
+        .from(promotionsTable)
+        .where(eq(promotionsTable.vendorId, vendor.id))
+        .orderBy(desc(promotionsTable.createdAt));
+      if (promos.length === 0) return { text: `No promotions yet. Add one with */promo add <text>*.` };
+      const lines = [`*Promotions*`, ``];
+      for (const p of promos) {
+        const tag = p.active ? "" : " (off)";
+        lines.push(
+          p.description ? `- ${p.title}: ${p.description}${tag}` : `- ${p.title}${tag}`,
+        );
+      }
+      return { text: lines.join("\n") };
+    }
+    if (rest === "off" || rest === "stop") {
+      const updated = await db
+        .update(promotionsTable)
+        .set({ active: false })
+        .where(eq(promotionsTable.vendorId, vendor.id))
+        .returning();
+      return {
+        text: `Disabled ${updated.length} promotion${updated.length === 1 ? "" : "s"}.`,
+      };
+    }
+    if (rest.startsWith("add ")) {
+      const text = rest.slice(4).trim();
+      if (!text) return { text: `Usage: */promo add <message>*` };
+      // Optional "title :: description"
+      const split = text.split(/\s*::\s*/);
+      const title = split[0]!.trim();
+      const description = split[1]?.trim() || null;
+      const [created] = await db
+        .insert(promotionsTable)
+        .values({ vendorId: vendor.id, title, description, active: true })
+        .returning();
+      return {
+        text: `Promotion added: *${created!.title}*. Customers will see it with the menu.`,
+      };
+    }
+    return { text: `Usage: */promo add <text>*, */promo list*, */promo off*` };
+  }
+
+  // ── Pro: /followups on | off | run ──────────────────────────────────────
+  if (lower === "/followups" || lower.startsWith("/followups ")) {
+    if (!hasFeature(vendor, "follow_ups")) {
+      return {
+        text: `Auto follow-ups are a Pro feature. Upgrade ${vendor.name} to Pro in the control panel.`,
+      };
+    }
+    const arg = body.slice("/followups".length).trim().toLowerCase();
+    if (arg === "on" || arg === "off") {
+      await db
+        .update(vendorsTable)
+        .set({ followUpsEnabled: arg === "on" })
+        .where(eq(vendorsTable.id, vendor.id));
+      return {
+        text: `Auto follow-ups ${arg === "on" ? "enabled" : "disabled"}.`,
+      };
+    }
+    if (arg === "run" || arg === "") {
+      const cutoff = new Date(Date.now() - 24 * 60 * 60 * 1000);
+      const stalled = await db
+        .select({
+          phone: ordersTable.customerPhone,
+          name: ordersTable.customerName,
+          total: ordersTable.total,
+          shortId: sql<string>`substring(${ordersTable.id}::text, 1, 8)`,
+        })
+        .from(ordersTable)
+        .where(
+          and(
+            eq(ordersTable.vendorId, vendor.id),
+            eq(ordersTable.status, "confirmed"),
+            eq(ordersTable.paymentStatus, "pending"),
+            sql`${ordersTable.createdAt} < ${cutoff}`,
+          ),
+        );
+      const seen = new Set<string>();
+      const targets = stalled.filter((s) => {
+        if (seen.has(s.phone)) return false;
+        seen.add(s.phone);
+        return true;
+      });
+      for (const t of targets) {
+        const text =
+          `Hi ${t.name}, this is a reminder about your order #${t.shortId} ` +
+          `at ${vendor.name} (total ${vendor.currency} ${Number(t.total).toFixed(2)}). ` +
+          `Reply *paid* once you've completed payment, or *agent* if you need help.`;
+        await sendWhatsAppMessage({
+          phoneNumberId: vendor.phoneNumberId,
+          to: t.phone,
+          text,
+        });
+      }
+      return {
+        text: `Sent reminders to ${targets.length} customer${targets.length === 1 ? "" : "s"} with stalled orders.`,
+      };
+    }
+    return {
+      text: `Usage: */followups on*, */followups off*, */followups run*. Currently ${vendor.followUpsEnabled ? "ON" : "OFF"}.`,
     };
   }
 

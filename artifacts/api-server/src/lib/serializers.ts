@@ -6,6 +6,8 @@ import type {
   MessageRow,
   CustomerRow,
   PaymentRow,
+  PromotionRow,
+  BroadcastRow,
 } from "@workspace/db";
 
 export function toVendor(row: VendorRow) {
@@ -23,7 +25,29 @@ export function toVendor(row: VendorRow) {
     bankAccountHolder: row.bankAccountHolder,
     currency: row.currency,
     welcomeMessage: row.welcomeMessage,
+    followUpsEnabled: row.followUpsEnabled,
     createdAt: row.createdAt.toISOString(),
+  };
+}
+
+export function toPromotion(row: PromotionRow) {
+  return {
+    id: row.id,
+    vendorId: row.vendorId,
+    title: row.title,
+    description: row.description,
+    active: row.active,
+    createdAt: row.createdAt.toISOString(),
+  };
+}
+
+export function toBroadcast(row: BroadcastRow) {
+  return {
+    id: row.id,
+    vendorId: row.vendorId,
+    message: row.message,
+    recipientCount: row.recipientCount,
+    sentAt: row.sentAt.toISOString(),
   };
 }
 

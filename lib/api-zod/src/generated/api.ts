@@ -78,6 +78,7 @@ export const ListVendorsResponseItem = zod.object({
   bankAccountHolder: zod.string().nullish(),
   currency: zod.string().optional(),
   welcomeMessage: zod.string().nullish(),
+  followUpsEnabled: zod.boolean().optional(),
   createdAt: zod.coerce.date(),
 });
 export const ListVendorsResponse = zod.array(ListVendorsResponseItem);
@@ -124,6 +125,7 @@ export const GetVendorResponse = zod
     bankAccountHolder: zod.string().nullish(),
     currency: zod.string().optional(),
     welcomeMessage: zod.string().nullish(),
+    followUpsEnabled: zod.boolean().optional(),
     createdAt: zod.coerce.date(),
   })
   .and(
@@ -156,6 +158,7 @@ export const UpdateVendorBody = zod.object({
   botNumber: zod.string().optional(),
   plan: zod.enum(["starter", "pro"]).optional(),
   botEnabled: zod.boolean().optional(),
+  followUpsEnabled: zod.boolean().optional(),
   bankName: zod.string().optional(),
   bankAccountNumber: zod.string().optional(),
   bankAccountHolder: zod.string().optional(),
@@ -177,6 +180,7 @@ export const UpdateVendorResponse = zod.object({
   bankAccountHolder: zod.string().nullish(),
   currency: zod.string().optional(),
   welcomeMessage: zod.string().nullish(),
+  followUpsEnabled: zod.boolean().optional(),
   createdAt: zod.coerce.date(),
 });
 
@@ -522,6 +526,115 @@ export const GetVendorAnalyticsResponse = zod.object({
     }),
   ),
   repeatCustomerRate: zod.number(),
+});
+
+/**
+ * @summary List promotions for a vendor
+ */
+export const ListVendorPromotionsParams = zod.object({
+  vendorId: zod.coerce.string(),
+});
+
+export const ListVendorPromotionsResponseItem = zod.object({
+  id: zod.string(),
+  vendorId: zod.string(),
+  title: zod.string(),
+  description: zod.string().nullish(),
+  active: zod.boolean(),
+  createdAt: zod.coerce.date(),
+});
+export const ListVendorPromotionsResponse = zod.array(
+  ListVendorPromotionsResponseItem,
+);
+
+/**
+ * @summary Create a promotion (Pro feature)
+ */
+export const CreateVendorPromotionParams = zod.object({
+  vendorId: zod.coerce.string(),
+});
+
+export const CreateVendorPromotionBody = zod.object({
+  title: zod.string().min(1),
+  description: zod.string().optional(),
+  active: zod.boolean().optional(),
+});
+
+/**
+ * @summary Update a promotion
+ */
+export const UpdateVendorPromotionParams = zod.object({
+  vendorId: zod.coerce.string(),
+  promotionId: zod.coerce.string(),
+});
+
+export const UpdateVendorPromotionBody = zod.object({
+  title: zod.string().min(1).optional(),
+  description: zod.string().optional(),
+  active: zod.boolean().optional(),
+});
+
+export const UpdateVendorPromotionResponse = zod.object({
+  id: zod.string(),
+  vendorId: zod.string(),
+  title: zod.string(),
+  description: zod.string().nullish(),
+  active: zod.boolean(),
+  createdAt: zod.coerce.date(),
+});
+
+/**
+ * @summary Delete a promotion
+ */
+export const DeleteVendorPromotionParams = zod.object({
+  vendorId: zod.coerce.string(),
+  promotionId: zod.coerce.string(),
+});
+
+/**
+ * @summary List past broadcasts
+ */
+export const ListVendorBroadcastsParams = zod.object({
+  vendorId: zod.coerce.string(),
+});
+
+export const ListVendorBroadcastsResponseItem = zod.object({
+  id: zod.string(),
+  vendorId: zod.string(),
+  message: zod.string(),
+  recipientCount: zod.number(),
+  sentAt: zod.coerce.date(),
+});
+export const ListVendorBroadcastsResponse = zod.array(
+  ListVendorBroadcastsResponseItem,
+);
+
+/**
+ * @summary Send a broadcast to recent customers (Pro feature)
+ */
+export const SendVendorBroadcastParams = zod.object({
+  vendorId: zod.coerce.string(),
+});
+
+export const SendVendorBroadcastBody = zod.object({
+  message: zod.string().min(1),
+  sinceDays: zod
+    .number()
+    .min(1)
+    .optional()
+    .describe("Only customers seen in the last N days. Default 30."),
+});
+
+/**
+ * @summary Send follow-up reminders to customers with stalled orders (Pro feature)
+ */
+export const RunVendorFollowUpsParams = zod.object({
+  vendorId: zod.coerce.string(),
+});
+
+export const RunVendorFollowUpsResponse = zod.object({
+  reminded: zod.number(),
+  broadcastId: zod.string().nullable(),
 });
 
 /**

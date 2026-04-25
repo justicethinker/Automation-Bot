@@ -26,16 +26,20 @@ Shared libraries:
 message and splits into two flows based on the sender's number:
 
 **Customer flow** (sender ≠ vendor's `adminNumber`):
-- greeting / `menu` → list active items
-- `order <item> x<qty>` → creates a pending order and returns an
-  `adminNotification` (forwarded to the vendor on WhatsApp)
+- greeting / `menu` → numbered list of active items, with up to 3 active
+  promotions shown at the top. Items are numbered globally across categories
+  in `(category, createdAt)` order so the numbers in the menu always match
+  what the customer replies with.
+- order by **number**: `1`, `1x2`, `1, 3x2, 5` (multi-item in one message),
+  qty-first `2 margherita`, or legacy `order <name> x<qty>`. Duplicate picks
+  are coalesced into one line.
 - `paid` → marks the latest confirmed order paid
 - `agent` / `human` → flips the conversation to `human`, alerts the admin,
   and stops auto-replies until the admin runs `/bot`
 - `help` → command list
 
 **Admin flow** (sender == vendor's `adminNumber`):
-- `/help` — command list
+- `/help` — command list (also lists Pro commands)
 - `menu` — show the menu
 - `add <name> <price>` / `remove <name>` — manage menu items
 - `orders` — list pending orders
@@ -43,6 +47,14 @@ message and splits into two flows based on the sender's number:
 - `paid [id]` — mark an order as paid (also notifies the customer)
 - `/human <phone>` — manually take over a customer chat
 - `/bot [phone]` — return that chat (or every chat) to bot mode
+
+**Admin Pro commands** (gated by `hasFeature`):
+- `/promo add <title> :: <description>` / `/promo list` / `/promo off`
+- `/broadcast <message>` — sends to customers active in the last 30 days,
+  records a row in `broadcasts`
+- `/followups on|off|run` — toggle automatic stalled-order reminders
+  (`vendors.followUpsEnabled`) or run them now (24h cutoff,
+  confirmed+unpaid, deduped by phone)
 
 ### Webhooks & routing
 
@@ -61,9 +73,11 @@ and returns `null` (stub mode for free-tier development).
 
 ### Plan gating
 
-`lib/plans.ts → hasFeature(plan, feature)` gates `analytics`,
-`customer_memory`, and `broadcasts` to the Pro plan. The UI mirrors this
-on the analytics and customers pages.
+`lib/plans.ts → hasFeature(vendorOrPlan, feature)` accepts either a
+`{plan: string}` row or a plain string. Pro-only features:
+`analytics`, `customer_memory`, `broadcasts`, `promotions`, `follow_ups`.
+The UI mirrors this on the analytics, customers, promotions, and
+broadcasts pages.
 
 ### Vendor WhatsApp config (per vendor)
 
@@ -75,11 +89,16 @@ on the analytics and customers pages.
 
 ## Plans
 
-- **Starter**: bot, menu, orders, manual bank-transfer payments.
-- **Pro**: adds analytics (per-vendor) and customer memory views.
+- **Starter**: bot, numbered menu, multi-item orders, manual bank-transfer
+  payments.
+- **Pro**: adds analytics (per-vendor), customer memory views, promotions
+  shown with the menu, broadcast messages to recent customers, and
+  automatic follow-ups for stalled (confirmed-but-unpaid) orders.
 
-The Pro/Starter gating is enforced in the UI on the analytics and
-customers pages.
+Tables added for Pro: `promotions` (id, vendorId, title, description,
+active, createdAt) and `broadcasts` (id, vendorId, message,
+recipientCount, sentAt). `vendors.followUpsEnabled` toggles the auto
+reminder behaviour.
 
 ## Local development
 

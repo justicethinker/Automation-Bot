@@ -1,0 +1,223 @@
+You are upgrading an existing WhatsApp bot backend to use a HYBRID intelligence system.
+
+IMPORTANT:
+
+* Do NOT remove existing logic
+* Do NOT rely only on AI
+* AI is OPTIONAL and must FAIL SAFELY
+* System must ALWAYS work even if AI fails
+
+---
+
+# 🎯 OBJECTIVE
+
+Improve message understanding using AI, while keeping full control with system logic.
+
+---
+
+# ⚙️ REQUIRED ARCHITECTURE
+
+Message flow MUST be:
+
+1. Normalize text
+2. Try AI extraction
+3. If AI fails → fallback to rule-based extraction
+4. Validate against menu
+5. Confirm with user
+6. Only then create order
+
+---
+
+# 1. INSTALL AI SUPPORT
+
+Install and configure:
+
+* OpenAI API
+
+Add env variable:
+OPENAI_API_KEY
+
+---
+
+# 2. CREATE AI EXTRACTION FUNCTION
+
+```javascript
+async function aiExtractOrder(text) {
+  try {
+    const response = await openai.chat.completions.create({
+      model: "gpt-4o-mini",
+      messages: [
+        {
+          role: "system",
+          content: "Extract order details from user message. Return ONLY JSON with item and quantity."
+        },
+        {
+          role: "user",
+          content: text
+        }
+      ]
+    });
+
+    const content = response.choices[0].message.content;
+
+    const parsed = JSON.parse(content);
+
+    if (!parsed.item) throw new Error("Invalid AI output");
+
+    return parsed;
+
+  } catch (err) {
+    return null; // FAIL SAFE
+  }
+}
+```
+
+---
+
+# 3. KEEP EXISTING FALLBACK LOGIC
+
+Use your existing extractOrder() function as fallback.
+
+---
+
+# 4. HYBRID EXTRACTION
+
+```javascript
+async function getOrderData(text) {
+  const aiResult = await aiExtractOrder(text);
+
+  if (aiResult) {
+    return aiResult;
+  }
+
+  // fallback
+  return extractOrder(text);
+}
+```
+
+---
+
+# 5. MENU VALIDATION (MANDATORY)
+
+After extraction:
+
+* match item against vendor menu using fuzzy matching
+* if no match → DO NOT create order
+
+---
+
+# 6. CONFIRMATION STEP (MANDATORY)
+
+Before creating order:
+
+Send:
+
+"You want {quantity} {item.name} for ₦{price}. Reply YES to confirm."
+
+---
+
+# 7. STORE PENDING ORDER
+
+Store temporary order:
+
+```javascript
+pendingOrders[customer_number] = {
+  item,
+  quantity,
+  vendor_id
+};
+```
+
+---
+
+# 8. HANDLE CONFIRMATION
+
+If user replies "yes":
+
+* create order in DB
+* continue normal order flow
+
+---
+
+# 9. HANDLE AI FAILURE GRACEFULLY
+
+If AI:
+
+* throws error
+* returns invalid JSON
+* returns wrong format
+
+System MUST:
+
+* ignore AI result
+* fallback to rule-based logic
+
+---
+
+# 10. DO NOT TRUST AI BLINDLY
+
+Even if AI returns:
+
+```json
+{ "item": "pizza", "quantity": 2 }
+```
+
+You MUST:
+
+* check menu
+* reject if not found
+
+---
+
+# 11. MODIFY EXISTING HANDLER
+
+Update order handling:
+
+```javascript
+const text = normalizeText(message);
+
+const orderData = await getOrderData(text);
+
+const matchedItem = findBestMatch(menu, orderData.item);
+
+if (!matchedItem) {
+  return sendMessage("Item not found. Here's our menu...");
+}
+
+// confirmation flow
+```
+
+---
+
+# ⚠️ STRICT RULES
+
+* AI is OPTIONAL, not required for system to work
+* NEVER create order without menu validation
+* NEVER skip confirmation step
+* NEVER break existing routing system
+
+---
+
+# 🎯 SUCCESS TEST
+
+Input:
+"I need one plate of jellof rice"
+
+AI succeeds:
+→ parsed correctly → matched → confirm
+
+AI fails:
+→ fallback parser runs → still works → confirm
+
+---
+
+# 🚀 FINAL REQUIREMENT
+
+System must:
+
+* work with AI
+* work WITHOUT AI
+* never crash
+* never create wrong orders
+
+Implement fully with clean, working code.

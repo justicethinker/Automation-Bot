@@ -21,5 +21,6 @@ export interface Vendor {
   bankAccountHolder?: string | null;
   currency?: string;
   welcomeMessage?: string | null;
+  followUpsEnabled?: boolean;
   createdAt: Date;
 }

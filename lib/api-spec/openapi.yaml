@@ -19,6 +19,8 @@ tags:
   - name: dashboard
   - name: webhook
   - name: simulator
+  - name: promotions
+  - name: broadcasts
 paths:
   /healthz:
     get:
@@ -398,6 +400,133 @@ paths:
               schema:
                 $ref: "#/components/schemas/VendorAnalytics"
 
+  /vendors/{vendorId}/promotions:
+    parameters:
+      - name: vendorId
+        in: path
+        required: true
+        schema: { type: string }
+    get:
+      operationId: listVendorPromotions
+      tags: [promotions]
+      summary: List promotions for a vendor
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Promotion"
+    post:
+      operationId: createVendorPromotion
+      tags: [promotions]
+      summary: Create a promotion (Pro feature)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreatePromotionBody"
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Promotion"
+
+  /vendors/{vendorId}/promotions/{promotionId}:
+    parameters:
+      - name: vendorId
+        in: path
+        required: true
+        schema: { type: string }
+      - name: promotionId
+        in: path
+        required: true
+        schema: { type: string }
+    patch:
+      operationId: updateVendorPromotion
+      tags: [promotions]
+      summary: Update a promotion
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdatePromotionBody"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Promotion"
+    delete:
+      operationId: deleteVendorPromotion
+      tags: [promotions]
+      summary: Delete a promotion
+      responses:
+        "204":
+          description: Deleted
+
+  /vendors/{vendorId}/broadcasts:
+    parameters:
+      - name: vendorId
+        in: path
+        required: true
+        schema: { type: string }
+    get:
+      operationId: listVendorBroadcasts
+      tags: [broadcasts]
+      summary: List past broadcasts
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Broadcast"
+    post:
+      operationId: sendVendorBroadcast
+      tags: [broadcasts]
+      summary: Send a broadcast to recent customers (Pro feature)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateBroadcastBody"
+      responses:
+        "201":
+          description: Sent
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Broadcast"
+
+  /vendors/{vendorId}/follow-ups/run:
+    parameters:
+      - name: vendorId
+        in: path
+        required: true
+        schema: { type: string }
+    post:
+      operationId: runVendorFollowUps
+      tags: [broadcasts]
+      summary: Send follow-up reminders to customers with stalled orders (Pro feature)
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FollowUpResult"
+
   /webhook/whatsapp:
     post:
       operationId: whatsappWebhook
@@ -465,6 +594,7 @@ components:
         bankAccountHolder: { type: string, nullable: true }
         currency: { type: string }
         welcomeMessage: { type: string, nullable: true }
+        followUpsEnabled: { type: boolean }
         createdAt: { type: string, format: date-time }
 
     VendorDetail:
@@ -523,6 +653,7 @@ components:
         botNumber: { type: string }
         plan: { $ref: "#/components/schemas/Plan" }
         botEnabled: { type: boolean }
+        followUpsEnabled: { type: boolean }
         bankName: { type: string }
         bankAccountNumber: { type: string }
         bankAccountHolder: { type: string }
@@ -840,3 +971,56 @@ components:
         conversationId: { type: string, nullable: true }
         isAdmin: { type: boolean }
         adminNotification: { type: string, nullable: true }
+
+    Promotion:
+      type: object
+      required: [id, vendorId, title, active, createdAt]
+      properties:
+        id: { type: string }
+        vendorId: { type: string }
+        title: { type: string }
+        description: { type: string, nullable: true }
+        active: { type: boolean }
+        createdAt: { type: string, format: date-time }
+
+    CreatePromotionBody:
+      type: object
+      required: [title]
+      properties:
+        title: { type: string, minLength: 1 }
+        description: { type: string }
+        active: { type: boolean }
+
+    UpdatePromotionBody:
+      type: object
+      properties:
+        title: { type: string, minLength: 1 }
+        description: { type: string }
+        active: { type: boolean }
+
+    Broadcast:
+      type: object
+      required: [id, vendorId, message, recipientCount, sentAt]
+      properties:
+        id: { type: string }
+        vendorId: { type: string }
+        message: { type: string }
+        recipientCount: { type: integer }
+        sentAt: { type: string, format: date-time }
+
+    CreateBroadcastBody:
+      type: object
+      required: [message]
+      properties:
+        message: { type: string, minLength: 1 }
+        sinceDays:
+          type: integer
+          minimum: 1
+          description: "Only customers seen in the last N days. Default 30."
+
+    FollowUpResult:
+      type: object
+      required: [reminded, broadcastId]
+      properties:
+        reminded: { type: integer }
+        broadcastId: { type: string, nullable: true }

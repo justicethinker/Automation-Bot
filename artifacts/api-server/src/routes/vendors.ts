@@ -145,6 +145,7 @@ router.patch("/vendors/:vendorId", async (req, res) => {
     "botNumber",
     "plan",
     "botEnabled",
+    "followUpsEnabled",
     "bankName",
     "bankAccountNumber",
     "bankAccountHolder",

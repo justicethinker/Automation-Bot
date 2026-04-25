@@ -2,7 +2,8 @@ import React from "react";
 import { Link, useLocation, useParams } from "wouter";
 import { 
   LayoutDashboard, Store, Smartphone, Settings,
-  MenuSquare, ShoppingCart, MessageSquare, Users, CreditCard, BarChart, ChevronLeft
+  MenuSquare, ShoppingCart, MessageSquare, Users, CreditCard, BarChart, ChevronLeft,
+  Tag, Megaphone
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useGetVendor } from "@workspace/api-client-react";
@@ -30,6 +31,8 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
     { href: `/vendors/${params.vendorId}/customers`, label: "Customers", icon: Users },
     { href: `/vendors/${params.vendorId}/payments`, label: "Payments", icon: CreditCard },
     { href: `/vendors/${params.vendorId}/analytics`, label: "Analytics", icon: BarChart },
+    { href: `/vendors/${params.vendorId}/promotions`, label: "Promotions", icon: Tag },
+    { href: `/vendors/${params.vendorId}/broadcasts`, label: "Broadcasts", icon: Megaphone },
     { href: `/vendors/${params.vendorId}/settings`, label: "Settings", icon: Settings },
   ];
 
