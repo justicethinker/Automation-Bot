@@ -6,7 +6,6 @@ import {
   numeric,
   integer,
   index,
-  uniqueIndex,
 } from "drizzle-orm/pg-core";
 import { vendorsTable } from "./vendors";
 import { menuItemsTable } from "./menuItems";
@@ -33,8 +32,8 @@ export const pendingOrdersTable = pgTable(
   },
   (table) => {
     return {
-      // Composite unique constraint: one pending order per customer per vendor
-      vendorCustomerIdx: uniqueIndex("pending_orders_vendor_customer_idx")
+      // Index for vendor+customer lookups (NOT unique - multiple items per customer)
+      vendorCustomerIdx: index("pending_orders_vendor_customer_idx")
         .on(table.vendorId, table.customerPhone),
       // Index for cleanup queries
       expiresAtIdx: index("pending_orders_expires_at_idx").on(table.expiresAt),

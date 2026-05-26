@@ -23,6 +23,7 @@ import {
   setPendingOrder,
   getPendingOrder,
   clearPendingOrder,
+  type PendingResolvedItem,
 } from "./pending-orders";
 import { findBestMenuMatch } from "./fuzzy-match";
 import { shouldRateLimitCustomer, shouldRateLimitAdminCommand } from "./rate-limiter";
@@ -309,14 +310,6 @@ type OrderItem = {
   name: string;
   unitPrice: number;
   quantity: number;
-};
-
-type PendingResolvedItem = {
-  menuItemId: string;
-  itemName: string;
-  quantity: number;
-  unitPrice: number;
-  total: number;
 };
 
 async function listAllMenuItems(vendor: VendorRow): Promise<MenuItemRow[]> {

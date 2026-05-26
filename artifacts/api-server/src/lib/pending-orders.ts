@@ -2,7 +2,10 @@ import { db, pendingOrdersTable } from "@workspace/db";
 import { eq, and, lt } from "drizzle-orm";
 import { logger } from "./logger";
 
-type PendingResolvedItem = {
+// Sentinel UUID used to identify the clarification metadata row
+const CLARIFICATION_SENTINEL_ID = "00000000-0000-0000-0000-000000000000";
+
+export type PendingResolvedItem = {
   menuItemId: string;
   itemName: string;
   quantity: number;
@@ -10,7 +13,7 @@ type PendingResolvedItem = {
   total: number;
 };
 
-type PendingClarification = {
+export type PendingClarification = {
   originalText: string;
   quantity: number;
   candidates: Array<{ itemId: string; itemName: string; confidence: number }>;
@@ -18,19 +21,17 @@ type PendingClarification = {
 };
 
 export type PendingOrder = {
-  id: string;
   vendorId: string;
   customerPhone: string;
   resolvedItems: PendingResolvedItem[];
   pendingClarification: PendingClarification | null;
   total: number;
-  timestamp: Date;
   expiresAt: Date;
 };
 
 /**
- * Store a pending order in the database instead of memory.
- * This survives process restarts and enables multi-instance deployments.
+ * Store a pending order as multiple rows — one per item.
+ * If pendingClarification is present, store it as a sentinel row.
  */
 export async function setPendingOrder(
   vendorId: string,
@@ -40,6 +41,7 @@ export async function setPendingOrder(
   total: number,
 ): Promise<PendingOrder | null> {
   try {
+    // Delete all existing rows for this customer+vendor
     await db
       .delete(pendingOrdersTable)
       .where(
@@ -50,31 +52,52 @@ export async function setPendingOrder(
       );
 
     const expiresAt = new Date(Date.now() + 10 * 60 * 1000);
+    const now = new Date();
 
-    const [created] = await db
-      .insert(pendingOrdersTable)
-      .values({
+    const rows = [];
+
+    // Insert one row per resolved item
+    for (const item of resolvedItems) {
+      rows.push({
         vendorId,
         customerPhone,
-        resolvedItems,
-        pendingClarification,
-        total: total.toString(),
-        createdAt: new Date(),
+        menuItemId: item.menuItemId,
+        itemName: item.itemName,
+        quantity: item.quantity,
+        unitPrice: item.unitPrice.toString(),
+        total: item.total.toString(),
+        createdAt: now,
         expiresAt,
-      })
-      .returning();
+      });
+    }
 
-    if (!created) return null;
+    // Insert clarification as a sentinel row if present
+    if (pendingClarification) {
+      rows.push({
+        vendorId,
+        customerPhone,
+        menuItemId: CLARIFICATION_SENTINEL_ID,
+        itemName: JSON.stringify(pendingClarification),
+        quantity: 0,
+        unitPrice: "0",
+        total: total.toString(),
+        createdAt: now,
+        expiresAt,
+      });
+    }
+
+    // If nothing to insert (empty order), return null
+    if (rows.length === 0) return null;
+
+    await db.insert(pendingOrdersTable).values(rows);
 
     return {
-      id: created.id,
-      vendorId: created.vendorId,
-      customerPhone: created.customerPhone,
-      resolvedItems: created.resolvedItems,
-      pendingClarification: created.pendingClarification,
-      total: Number(created.total),
-      timestamp: created.createdAt,
-      expiresAt: created.expiresAt,
+      vendorId,
+      customerPhone,
+      resolvedItems,
+      pendingClarification,
+      total,
+      expiresAt,
     };
   } catch (err) {
     logger.error({ err, vendorId, customerPhone }, "Failed to set pending order");
@@ -83,17 +106,16 @@ export async function setPendingOrder(
 }
 
 /**
- * Retrieve a pending order for a customer
+ * Retrieve a pending order by grouping all rows for this customer+vendor.
  */
 export async function getPendingOrder(
   vendorId: string,
   customerPhone: string,
 ): Promise<PendingOrder | null> {
   try {
-    // Clean up expired orders first
     await cleanupExpiredPendingOrders(vendorId);
 
-    const [pending] = await db
+    const rows = await db
       .select()
       .from(pendingOrdersTable)
       .where(
@@ -101,28 +123,55 @@ export async function getPendingOrder(
           eq(pendingOrdersTable.vendorId, vendorId),
           eq(pendingOrdersTable.customerPhone, customerPhone),
         ),
-      )
-      .limit(1);
+      );
 
-    if (!pending) return null;
+    if (rows.length === 0) return null;
 
-    // Check if expired
-    if (new Date() > pending.expiresAt) {
-      await db
-        .delete(pendingOrdersTable)
-        .where(eq(pendingOrdersTable.id, pending.id));
+    // Check expiry on first row
+    if (new Date() > rows[0]!.expiresAt) {
+      await clearPendingOrder(vendorId, customerPhone);
       return null;
     }
 
+    const resolvedItems: PendingResolvedItem[] = [];
+    let pendingClarification: PendingClarification | null = null;
+    let total = 0;
+
+    for (const row of rows) {
+      if (row.menuItemId === CLARIFICATION_SENTINEL_ID) {
+        try {
+          pendingClarification = JSON.parse(row.itemName) as PendingClarification;
+          total = Number(row.total);
+        } catch {
+          logger.warn({ vendorId, customerPhone }, "Failed to parse clarification sentinel row");
+        }
+      } else {
+        resolvedItems.push({
+          menuItemId: row.menuItemId,
+          itemName: row.itemName,
+          quantity: row.quantity,
+          unitPrice: Number(row.unitPrice),
+          total: Number(row.total),
+        });
+        total += Number(row.total);
+      }
+    }
+
+    // If clarification row set total, use that (it holds the running total)
+    // Otherwise sum from items
+    const finalTotal = pendingClarification
+      ? rows.find(r => r.menuItemId === CLARIFICATION_SENTINEL_ID)
+        ? Number(rows.find(r => r.menuItemId === CLARIFICATION_SENTINEL_ID)!.total)
+        : total
+      : total;
+
     return {
-      id: pending.id,
-      vendorId: pending.vendorId,
-      customerPhone: pending.customerPhone,
-      resolvedItems: pending.resolvedItems,
-      pendingClarification: pending.pendingClarification,
-      total: Number(pending.total),
-      timestamp: pending.createdAt,
-      expiresAt: pending.expiresAt,
+      vendorId,
+      customerPhone,
+      resolvedItems,
+      pendingClarification,
+      total: finalTotal,
+      expiresAt: rows[0]!.expiresAt,
     };
   } catch (err) {
     logger.error({ err, vendorId, customerPhone }, "Failed to get pending order");
@@ -131,7 +180,7 @@ export async function getPendingOrder(
 }
 
 /**
- * Clear/delete a pending order
+ * Clear all pending order rows for a customer
  */
 export async function clearPendingOrder(
   vendorId: string,
@@ -151,10 +200,6 @@ export async function clearPendingOrder(
   }
 }
 
-/**
- * Clean up expired pending orders for a vendor
- * Call this periodically or before operations
- */
 export async function cleanupExpiredPendingOrders(vendorId: string): Promise<number> {
   try {
     const result = await db
@@ -166,11 +211,6 @@ export async function cleanupExpiredPendingOrders(vendorId: string): Promise<num
         ),
       )
       .returning();
-
-    if (result.length > 0) {
-      logger.debug({ vendorId, count: result.length }, "Cleaned up expired pending orders");
-    }
-
     return result.length;
   } catch (err) {
     logger.error({ err, vendorId }, "Failed to cleanup expired pending orders");
@@ -178,21 +218,15 @@ export async function cleanupExpiredPendingOrders(vendorId: string): Promise<num
   }
 }
 
-/**
- * Global cleanup task - remove all expired pending orders across all vendors
- * Schedule this to run every 5 minutes
- */
 export async function cleanupAllExpiredPendingOrders(): Promise<number> {
   try {
     const result = await db
       .delete(pendingOrdersTable)
       .where(lt(pendingOrdersTable.expiresAt, new Date()))
       .returning();
-
     if (result.length > 0) {
       logger.info({ count: result.length }, "Global cleanup: expired pending orders removed");
     }
-
     return result.length;
   } catch (err) {
     logger.error({ err }, "Failed to cleanup all expired pending orders");
@@ -200,14 +234,10 @@ export async function cleanupAllExpiredPendingOrders(): Promise<number> {
   }
 }
 
-/**
- * Schedule periodic cleanup of expired pending orders
- */
-export function scheduleExpiredPendingOrdersCleanup(intervalMs: number = 3600000): NodeJS.Timer {
+export function scheduleExpiredPendingOrdersCleanup(intervalMs = 3600000): NodeJS.Timer {
   return setInterval(async () => {
     try {
-      const deleted = await cleanupAllExpiredPendingOrders();
-      logger.debug({ count: deleted }, "Scheduled pending orders cleanup completed");
+      await cleanupAllExpiredPendingOrders();
     } catch (err) {
       logger.error({ err }, "Scheduled pending orders cleanup failed");
     }
