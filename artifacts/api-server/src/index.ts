@@ -16,6 +16,7 @@ function validateEnvironment() {
     "NODE_ENV",
     "DATABASE_URL",
     "REDIS_URL",
+    "FRONTEND_URL",
     "VERIFY_TOKEN",
     "ACCESS_TOKEN",
   ];
