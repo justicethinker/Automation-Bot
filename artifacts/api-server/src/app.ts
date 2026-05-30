@@ -4,6 +4,7 @@ import pinoHttp from "pino-http";
 import path from "path";
 import router from "./routes";
 import { logger } from "./lib/logger";
+import { requireApiKey } from "./middleware/auth";
 
 const app: Express = express();
 

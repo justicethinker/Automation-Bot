@@ -12,3 +12,4 @@ export * from "./conversation-states";
 export * from "./admin-contexts";
 export * from "./idempotency-keys";
 export * from "./message-delivery";
+export * from "./vendor-admins";

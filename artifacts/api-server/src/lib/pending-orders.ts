@@ -111,7 +111,7 @@ export async function setPendingOrder(
 export async function getPendingOrder(
   vendorId: string,
   customerPhone: string,
-): Promise<PendingOrder | null> {
+): Promise<{ status: "found" | "expired" | "not_found"; order?: PendingOrder }> {
   try {
     await cleanupExpiredPendingOrders(vendorId);
 
@@ -125,12 +125,12 @@ export async function getPendingOrder(
         ),
       );
 
-    if (rows.length === 0) return null;
+    if (rows.length === 0) return { status: "not_found" };
 
     // Check expiry on first row
     if (new Date() > rows[0]!.expiresAt) {
       await clearPendingOrder(vendorId, customerPhone);
-      return null;
+      return { status: "expired" };
     }
 
     const resolvedItems: PendingResolvedItem[] = [];
@@ -166,16 +166,19 @@ export async function getPendingOrder(
       : total;
 
     return {
-      vendorId,
-      customerPhone,
-      resolvedItems,
-      pendingClarification,
-      total: finalTotal,
-      expiresAt: rows[0]!.expiresAt,
+      status: "found",
+      order: {
+        vendorId,
+        customerPhone,
+        resolvedItems,
+        pendingClarification,
+        total: finalTotal,
+        expiresAt: rows[0]!.expiresAt,
+      },
     };
   } catch (err) {
     logger.error({ err, vendorId, customerPhone }, "Failed to get pending order");
-    return null;
+    return { status: "not_found" };
   }
 }
 

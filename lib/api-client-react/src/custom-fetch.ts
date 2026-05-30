@@ -17,6 +17,7 @@ const DEFAULT_JSON_ACCEPT = "application/json, application/problem+json";
 
 let _baseUrl: string | null = null;
 let _authTokenGetter: AuthTokenGetter | null = null;
+let _apiKey: string | null = null;
 
 /**
  * Set a base URL that is prepended to every relative request URL
@@ -27,6 +28,14 @@ let _authTokenGetter: AuthTokenGetter | null = null;
  */
 export function setBaseUrl(url: string | null): void {
   _baseUrl = url ? url.replace(/\/+$/, "") : null;
+}
+
+/**
+ * Set the API key to be sent in the X-Api-Key header
+ * Pass `null` to clear the API key
+ */
+export function setApiKey(key: string | null): void {
+  _apiKey = key ?? null;
 }
 
 /**
@@ -347,6 +356,11 @@ export async function customFetch<T = unknown>(
 
   if (responseType === "json" && !headers.has("accept")) {
     headers.set("accept", DEFAULT_JSON_ACCEPT);
+  }
+
+  // Attach API key when configured and not already present
+  if (_apiKey && !headers.has("x-api-key")) {
+    headers.set("x-api-key", _apiKey);
   }
 
   // Attach bearer token when an auth getter is configured and no

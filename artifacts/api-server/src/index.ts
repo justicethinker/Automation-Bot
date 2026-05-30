@@ -19,6 +19,8 @@ function validateEnvironment() {
     "FRONTEND_URL",
     "VERIFY_TOKEN",
     "ACCESS_TOKEN",
+    "WHATSAPP_APP_SECRET",
+    "API_SECRET_KEY",
   ];
 
   const missing: string[] = [];

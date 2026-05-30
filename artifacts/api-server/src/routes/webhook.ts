@@ -9,8 +9,9 @@ import {
 import { handleIncomingMessage } from "../lib/bot";
 import { queueIncomingMessage } from "../lib/queue";
 import { logger } from "../lib/logger";
-import { shouldRateLimitCustomer } from "../lib/rate-limiter";
+import { shouldRateLimitCustomer } from "../lib/rate-limiter-redis";
 import { verifyWebhookSignature } from "../lib/webhook-signature";
+import { checkIdempotencyKey, recordIdempotencyKey } from "../lib/idempotency";
 
 const router: IRouter = Router();
 
@@ -50,14 +51,14 @@ router.post("/webhook/messages", async (req, res) => {
   // This ensures the request is genuinely from Meta
   const signature = req.get("X-Hub-Signature-256");
   const rawBody = (req as any).rawBody || JSON.stringify(req.body);
-  const accessToken = process.env.ACCESS_TOKEN;
+  const appSecret = process.env.WHATSAPP_APP_SECRET;
 
-  if (!accessToken) {
-    logger.error("ACCESS_TOKEN not set - cannot validate webhook signatures");
+  if (!appSecret) {
+    logger.error("WHATSAPP_APP_SECRET not set - cannot validate webhook signatures");
     return res.status(500).json({ error: "server_configuration_error" });
   }
 
-  const isSignatureValid = verifyWebhookSignature(rawBody, signature, accessToken);
+  const isSignatureValid = verifyWebhookSignature(rawBody, signature, appSecret);
   if (!isSignatureValid) {
     logger.error("Webhook signature verification failed - rejecting request");
     return res.status(403).json({ error: "signature_verification_failed" });
@@ -105,35 +106,84 @@ router.post("/webhook/messages", async (req, res) => {
           }
 
           for (const msg of messages) {
-            if (msg.type !== "text" || !msg.text?.body || !msg.from) continue;
-            const profileName =
-              v.contacts?.find((c) => c.wa_id === msg.from)?.profile?.name ??
-              msg.from;
-            
-            // CRITICAL: Check rate limit BEFORE queueing
-            // This prevents spam from filling up the queue
-            if (shouldRateLimitCustomer(msg.from)) {
-              logger.warn(
-                { phone: msg.from, vendorId: vendor.id, messageId: msg.id },
-                "Rate limited: ignoring spam customer",
-              );
+            // Handle text messages
+            if (msg.type === "text" && msg.text?.body && msg.from) {
+              // Deduplicate using Meta's message ID
+              // WhatsApp retries webhook delivery, so we need to skip duplicates
+              if (msg.id) {
+                const dedupeKey = `whatsapp_msg:${msg.id}`;
+                const existing = await checkIdempotencyKey(dedupeKey);
+                if (existing) {
+                  logger.debug(
+                    { messageId: msg.id, from: msg.from, vendorId: vendor.id },
+                    "Duplicate message skipped",
+                  );
+                  continue;
+                }
+              }
+              
+              const profileName =
+                v.contacts?.find((c) => c.wa_id === msg.from)?.profile?.name ??
+                msg.from;
+              
+              // CRITICAL: Check rate limit BEFORE queueing
+              // This prevents spam from filling up the queue
+              if (await shouldRateLimitCustomer(msg.from)) {
+                logger.warn(
+                  { phone: msg.from, vendorId: vendor.id, messageId: msg.id },
+                  "Rate limited: ignoring spam customer",
+                );
+                continue;
+              }
+              
+              // PRODUCTION CHANGE: Queue the message instead of processing immediately
+              // This prevents request pile-up during traffic spikes
+              try {
+                await queueIncomingMessage(
+                  vendor.id,
+                  msg.from,
+                  profileName,
+                  msg.text.body,
+                );
+                
+                // Record this message ID to prevent duplicate processing
+                if (msg.id) {
+                  await recordIdempotencyKey(
+                    `whatsapp_msg:${msg.id}`,
+                    msg.id,
+                    "message",
+                  );
+                }
+              } catch (err) {
+                logger.error(
+                  { err, phone: msg.from, vendorId: vendor.id, messageId: msg.id },
+                  "Failed to queue incoming message",
+                );
+              }
               continue;
             }
-            
-            // PRODUCTION CHANGE: Queue the message instead of processing immediately
-            // This prevents request pile-up during traffic spikes
-            try {
-              await queueIncomingMessage(
-                vendor.id,
-                msg.from,
-                profileName,
-                msg.text.body,
-              );
-            } catch (err) {
-              logger.error(
-                { err, phone: msg.from, vendorId: vendor.id, messageId: msg.id },
-                "Failed to queue incoming message",
-              );
+
+            // Handle non-text messages: send a polite fallback
+            if (msg.from && msg.type && msg.type !== "text") {
+              // Don't respond to reactions or read receipts
+              if (msg.type === "reaction" || msg.type === "read") {
+                continue;
+              }
+              
+              // Send fallback for images, voice notes, documents, etc.
+              try {
+                await queueOutboundMessage(
+                  vendor.phoneNumberId!,
+                  msg.from,
+                  `Sorry, I can only process text messages. Please send your message as text and I'll help you! 📝`,
+                );
+              } catch (err) {
+                logger.warn(
+                  { err, from: msg.from, msgType: msg.type },
+                  "Failed to send non-text fallback message",
+                );
+              }
+              continue;
             }
           }
         }

@@ -9,6 +9,38 @@ export type MenuMatchResult =
   | { kind: "none"; suggestions: MenuItemRow[] };
 
 /**
+ * Fuse.js instance cache with TTL
+ */
+interface FuseCache {
+  fuse: Fuse<MenuItemRow>;
+  expiresAt: number;
+}
+
+const fuseCache = new Map<string, FuseCache>();
+const FUSE_CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
+
+function getFuseInstance(vendorId: string, menuItems: MenuItemRow[]): Fuse<MenuItemRow> {
+  const cached = fuseCache.get(vendorId);
+  if (cached && Date.now() < cached.expiresAt) {
+    return cached.fuse;
+  }
+  const fuse = new Fuse(menuItems, {
+    keys: ["name"],
+    threshold: 0.4,
+    includeScore: true,
+  });
+  fuseCache.set(vendorId, { fuse, expiresAt: Date.now() + FUSE_CACHE_TTL_MS });
+  return fuse;
+}
+
+/**
+ * Invalidate the Fuse cache for a vendor when their menu changes
+ */
+export function invalidateFuseCache(vendorId: string): void {
+  fuseCache.delete(vendorId);
+}
+
+/**
  * Find best menu item match with disambiguation
  * 
  * Returns:
@@ -20,6 +52,7 @@ export type MenuMatchResult =
 export function findBestMenuMatch(
   itemName: string,
   menuItems: MenuItemRow[],
+  vendorId: string,
   threshold: number = 0.6,
 ): MenuMatchResult {
   if (menuItems.length === 0) {
@@ -44,12 +77,8 @@ export function findBestMenuMatch(
     return { kind: "unique", item: substring, confidence: 0.85 };
   }
 
-  // Fuzzy match using Fuse.js
-  const fuse = new Fuse(menuItems, {
-    keys: ["name"],
-    threshold: 1 - threshold, // Fuse uses distance, not similarity
-    includeScore: true,
-  });
+  // Fuzzy match using Fuse.js with cached instance
+  const fuse = getFuseInstance(vendorId, menuItems);
 
   const results = fuse.search(itemName);
 

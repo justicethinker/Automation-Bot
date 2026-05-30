@@ -6,6 +6,7 @@ import {
   boolean,
   index,
   jsonb,
+  integer,
 } from "drizzle-orm/pg-core";
 import { vendorsTable } from "./vendors";
 
@@ -22,7 +23,7 @@ export const messageDeliveryTable = pgTable(
     delivered: boolean("delivered").notNull().default(false),
     deliveredAt: timestamp("delivered_at", { withTimezone: true }),
     failureReason: text("failure_reason"),
-    attemptCount: text("attempt_count").notNull().default("1"),
+    attemptCount: integer("attempt_count").notNull().default(1),
     metadata: jsonb("metadata"),
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()

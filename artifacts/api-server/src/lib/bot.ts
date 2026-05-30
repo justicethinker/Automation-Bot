@@ -13,6 +13,7 @@ import {
   paymentsTable,
   promotionsTable,
   broadcastsTable,
+  vendorAdminsTable,
 } from "@workspace/db";
 import { and, eq, sql, desc, gte } from "drizzle-orm";
 import { sendWhatsAppMessage } from "./whatsapp";
@@ -25,9 +26,14 @@ import {
   clearPendingOrder,
   type PendingResolvedItem,
 } from "./pending-orders";
+import {
+  generateOrderIdempotencyKey,
+  checkIdempotencyKey,
+  recordIdempotencyKey,
+} from "./idempotency";
 import { findBestMenuMatch } from "./fuzzy-match";
-import { shouldRateLimitCustomer, shouldRateLimitAdminCommand } from "./rate-limiter";
-import { queueOutboundMessage } from "./queue";
+import { shouldRateLimitCustomer, shouldRateLimitAdminCommand } from "./rate-limiter-redis";
+import { queueOutboundMessage, queueBroadcastMessage } from "./queue";
 
 export type IncomingResult = {
   conversation: ConversationRow | null;
@@ -370,14 +376,40 @@ function parseOrderLine(body: string): ParsedItem[] {
   return result;
 }
 
-function looksLikeOrder(body: string): boolean {
+function looksLikeOrder(body: string, menuItems: MenuItemRow[]): boolean {
   const trimmed = body.trim();
+
+  // Starts with explicit order triggers
   if (startsWithAny(trimmed, orderTriggers)) return true;
-  if (/^[\d, x×*]+$/i.test(trimmed)) return true;
+
+  // Pure number pattern (e.g. "1", "1,2,3", "1x2")
+  if (/^[\d,\s x×*]+$/i.test(trimmed) && /\d/.test(trimmed)) return true;
+
+  // Contains quantity notation like "x2" or "×3"
   if (/\b[x×]\s?\d+\b/i.test(trimmed)) return true;
-  if (/\b(?:rice|chicken|burger|shawarma|plate|piece|meal|order|want|need)\b/i.test(trimmed)) {
-    return true;
+
+  // Fuzzy-match at least one token against actual menu items
+  // This makes the detection vendor-agnostic
+  if (menuItems.length > 0) {
+    const normalized = normalizeOrderText(trimmed);
+    const tokens = normalized.split(/[\s,;]+/).filter(Boolean);
+    
+    for (const token of tokens) {
+      if (token.length < 2) continue; // Skip very short tokens
+      
+      // Try fuzzy matching this token against menu item names
+      for (const item of menuItems) {
+        const itemNameLower = item.name.toLowerCase();
+        const tokenLower = token.toLowerCase();
+        
+        // Exact substring match
+        if (itemNameLower.includes(tokenLower) || tokenLower.includes(itemNameLower.split(" ")[0]!)) {
+          return true;
+        }
+      }
+    }
   }
+
   return false;
 }
 
@@ -451,7 +483,7 @@ async function buildPendingOrderState(
   const unresolved: Array<{ text: string; quantity: number; resolution: OrderResolution }> = [];
 
   for (const request of requests) {
-    const result = resolveOrderRequest(request, activeItems, allItems);
+    const result = resolveOrderRequest(request, activeItems, allItems, vendor.id);
     if (result.type === "resolved") {
       resolvedItems.push({ item: result.item, quantity: request.quantity });
       continue;
@@ -666,7 +698,7 @@ async function resolvePendingClarification(
   vendor: VendorRow,
   conversation: ConversationRow,
   body: string,
-  pendingOrder: NonNullable<Awaited<ReturnType<typeof getPendingOrder>>>,
+  pendingOrder: PendingOrder,
 ): Promise<BotReply | null> {
   if (!pendingOrder.pendingClarification) return null;
 
@@ -674,6 +706,53 @@ async function resolvePendingClarification(
   const allItems = await listAllMenuItems(vendor);
   const state = pendingOrder.pendingClarification;
   const trimmed = body.trim();
+
+  // Handle delivery address collection
+  if (state.originalText === "awaiting_delivery_address") {
+    // Store the address in the pending order by creating a new order with the address
+    // For now, we'll store it in a special way that the order creation can access
+    const updatedOrder = { ...pendingOrder, deliveryAddress: trimmed } as any;
+    // Recreate the pending order with the address, then create the actual order
+    const order = await createOrderWithLock(
+      vendor.id,
+      conversation.customerPhone ?? "unknown",
+      conversation.customerName ?? "Anonymous",
+      pendingOrder.resolvedItems.map(pendingResolvedItemToOrderItem),
+      vendor,
+    );
+
+    if (order) {
+      // Update order notes with the address
+      await db.update(ordersTable).set({
+        notes: trimmed,
+      }).where(eq(ordersTable.id, order.id));
+    }
+
+    await clearPendingOrder(vendor.id, conversation.customerPhone);
+
+    if (!order) {
+      return {
+        text: `Sorry, I encountered an error confirming your order. Please try again.`,
+        handover: false,
+      };
+    }
+
+    const orderItems = pendingOrder.resolvedItems.map(pendingResolvedItemToOrderItem);
+    const lines: string[] = [`*Order confirmed! ✓*`, ``];
+    for (const item of orderItems) {
+      lines.push(
+        `- ${item.quantity}× ${item.item.name} — ${formatMoney(
+          Number(item.item.price) * item.quantity,
+          vendor.currency,
+        )}`,
+      );
+    }
+    lines.push(``, `Total: *${formatMoney(pendingOrder.total, vendor.currency)}*`);
+    lines.push(``, `Address: ${trimmed}`);
+    lines.push(``, `Order #${order.shortId} sent to vendor. They'll confirm shortly.`);
+
+    return { text: lines.join("\n"), handover: false };
+  }
 
   if (state.candidates.length > 0) {
     const selectedRef = findBestCandidateMatch(trimmed, state.candidates);
@@ -704,7 +783,7 @@ Reply YES to confirm or NO to cancel.`,
       }
 
       const nextRequest = state.remaining.shift()!;
-      const nextResolution = resolveOrderRequest({ kind: "name", name: nextRequest.text, quantity: nextRequest.quantity }, activeItems, allItems);
+      const nextResolution = resolveOrderRequest({ kind: "name", name: nextRequest.text, quantity: nextRequest.quantity }, activeItems, allItems, vendor.id);
       return await handleNextPendingResolution(vendor, conversation, resolvedItems, nextRequest, nextResolution, state.remaining);
     }
 
@@ -854,6 +933,7 @@ function resolveOrderRequest(
   req: ParsedItem,
   activeItems: MenuItemRow[],
   allItems: MenuItemRow[],
+  vendorId: string,
 ): OrderResolution {
   if (req.kind === "number") {
     const item = activeItems[req.index - 1] ?? null;
@@ -866,7 +946,7 @@ function resolveOrderRequest(
     return { type: "resolved", item, quantity: req.quantity };
   }
 
-  const fuzzyResult = findBestMenuMatch(req.name, allItems);
+  const fuzzyResult = findBestMenuMatch(req.name, allItems, vendorId);
   if (fuzzyResult.kind === "exact" || fuzzyResult.kind === "unique") {
     if (!fuzzyResult.item.available) {
       return { type: "unavailable", item: fuzzyResult.item, quantity: req.quantity };
@@ -909,27 +989,22 @@ async function findOrCreateConversation(
 ): Promise<ConversationRow> {
   const phone = customerPhone ?? "unknown";
   const name = customerName ?? "Anonymous";
-  
-  const existing = await db
-    .select()
-    .from(conversationsTable)
-    .where(
-      and(
-        eq(conversationsTable.vendorId, vendor.id),
-        eq(conversationsTable.customerPhone, phone),
-      ),
-    )
-    .limit(1);
-  if (existing[0]) return existing[0];
-  const [created] = await db
+
+  // Upsert: insert if not exists, update name if exists, always return the row
+  const [row] = await db
     .insert(conversationsTable)
     .values({
       vendorId: vendor.id,
       customerPhone: phone,
       customerName: name,
     })
+    .onConflictDoUpdate({
+      target: [conversationsTable.vendorId, conversationsTable.customerPhone],
+      set: { customerName: name },
+    })
     .returning();
-  return created!;
+
+  return row!;
 }
 
 /**
@@ -949,6 +1024,25 @@ async function createOrderWithLock(
   vendor: VendorRow,
 ): Promise<OrderRow | null> {
   try {
+    // Generate idempotency key from stable inputs
+    const itemKey = orderItems.map((oi) => `${oi.item.id}:${oi.quantity}`).join(",");
+    const idempotencyKey = generateOrderIdempotencyKey(vendorId, customerPhone, itemKey);
+
+    // Check if we've already created an order with this key
+    const existingKey = await checkIdempotencyKey(idempotencyKey);
+    if (existingKey) {
+      logger.info(
+        { vendorId, customerPhone, existingOrderId: existingKey.id },
+        "Duplicate order prevented via idempotency key",
+      );
+      const [existing] = await db
+        .select()
+        .from(ordersTable)
+        .where(eq(ordersTable.id, existingKey.id))
+        .limit(1);
+      return existing ?? null;
+    }
+
     const [order] = await db
       .insert(ordersTable)
       .values({
@@ -968,6 +1062,11 @@ async function createOrderWithLock(
         })),
       })
       .returning();
+
+    if (order) {
+      // Record this idempotency key so future requests with the same key return this order
+      await recordIdempotencyKey(idempotencyKey, order.id, "order");
+    }
 
     return order ?? null;
   } catch (err) {
@@ -1015,11 +1114,21 @@ async function recordMessage(
     .where(eq(conversationsTable.id, conversationId));
 }
 
-function isAdminSender(vendor: VendorRow, fromPhone: string): boolean {
-  if (!vendor.adminNumber) return false;
-  // Normalize: strip spaces and a single leading '+' for comparison.
+async function isAdminSender(vendor: VendorRow, fromPhone: string): Promise<boolean> {
   const norm = (s: string) => s.replace(/\s+/g, "").replace(/^\+/, "");
-  return norm(vendor.adminNumber) === norm(fromPhone);
+  const normalizedFrom = norm(fromPhone);
+
+  // Legacy adminNumber compatibility
+  if (vendor.adminNumber && norm(vendor.adminNumber) === normalizedFrom) {
+    return true;
+  }
+
+  const admins = await db
+    .select()
+    .from(vendorAdminsTable)
+    .where(eq(vendorAdminsTable.vendorId, vendor.id));
+
+  return admins.some((admin) => norm(admin.phone) === normalizedFrom);
 }
 
 export async function handleIncomingMessage(args: {
@@ -1031,7 +1140,7 @@ export async function handleIncomingMessage(args: {
   const { vendor, fromPhone, fromName, body } = args;
 
   // Rate limit: prevent customer spam
-  if (shouldRateLimitCustomer(fromPhone)) {
+  if (await shouldRateLimitCustomer(fromPhone)) {
     logger.warn({ phone: fromPhone }, "Customer rate limited");
     return {
       conversation: null,
@@ -1041,10 +1150,10 @@ export async function handleIncomingMessage(args: {
     };
   }
 
-  // Admin (vendor's personal number) -> admin command flow.
-  if (isAdminSender(vendor, fromPhone)) {
+  // Admin (vendor's personal number or vendor admins) -> admin command flow.
+  if (await isAdminSender(vendor, fromPhone)) {
     // Admin rate limiting
-    if (shouldRateLimitAdminCommand(vendor.id)) {
+    if (await shouldRateLimitAdminCommand(vendor.id)) {
       logger.warn({ vendorId: vendor.id }, "Admin command rate limited");
       return {
         conversation: null,
@@ -1145,6 +1254,9 @@ async function computeBotReply(
   conversation: ConversationRow,
   body: string,
 ): Promise<BotReply> {
+  // Fetch active menu items once at the beginning for use in order detection and menu building
+  const activeItems = await listActiveMenuItems(vendor);
+
   // Human handover request
   if (includesAny(body, agentTriggers)) {
     return {
@@ -1155,7 +1267,7 @@ async function computeBotReply(
   }
 
   // Help / commands
-  if (startsWithAny(body, helpTriggers)) {
+  if (startsWithAny(body, helpTriggers) || includesAny(body, helpTriggers)) {
     return {
       text: [
         `I can help you with:`,
@@ -1193,11 +1305,21 @@ async function computeBotReply(
     return {
       text: `Thanks. We've notified the vendor of your payment and they'll confirm shortly.`,
       handover: false,
-      adminAlert: `Customer ${conversation.customerName} (${conversation.customerPhone}) reports payment for order #${target.id.slice(0, 8)} (${formatMoney(Number(target.total), vendor.currency)}). Reply *paid ${target.id.slice(0, 8)}* once verified.`,
+      adminAlert: `Customer ${conversation.customerName} (${conversation.customerPhone}) reports payment for order #${target.shortId} (${formatMoney(Number(target.total), vendor.currency)}). Reply *paid ${target.shortId}* once verified.`,
     };
   }
 
-  const pendingOrder = await getPendingOrder(vendor.id, conversation.customerPhone);
+  const pendingOrderResult = await getPendingOrder(vendor.id, conversation.customerPhone);
+
+  // Handle expired pending order
+  if (pendingOrderResult.status === "expired") {
+    return {
+      text: `Your pending order has expired. Reply *menu* to start a new one!`,
+      handover: false,
+    };
+  }
+
+  const pendingOrder = pendingOrderResult.status === "found" ? pendingOrderResult.order : null;
 
   if (pendingOrder?.pendingClarification) {
     const followUp = await resolvePendingClarification(vendor, conversation, body, pendingOrder);
@@ -1206,6 +1328,31 @@ async function computeBotReply(
 
   if (pendingOrder) {
     if (isAffirmative(body)) {
+      // Check if vendor requires delivery address and we don't have one yet
+      if (vendor.requiresDeliveryAddress) {
+        const hasAddress = (pendingOrder as any).deliveryAddress;
+        if (!hasAddress) {
+          // Store the current pending order with a clarification state to ask for address
+          await setPendingOrder(
+            vendor.id,
+            conversation.customerPhone,
+            pendingOrder.resolvedItems,
+            {
+              originalText: "awaiting_delivery_address",
+              quantity: 1,
+              candidates: [],
+              remaining: [],
+            },
+            pendingOrder.total,
+          );
+
+          return {
+            text: `Please provide your delivery address so the vendor knows where to send your order.`,
+            handover: false,
+          };
+        }
+      }
+
       const order = await createOrderWithLock(
         vendor.id,
         conversation.customerPhone ?? "unknown",
@@ -1234,7 +1381,7 @@ async function computeBotReply(
         );
       }
       lines.push(``, `Total: *${formatMoney(pendingOrder.total, vendor.currency)}*`);
-      lines.push(``, `Order #${order.id.slice(0, 8)} sent to vendor. They'll confirm shortly.`);
+      lines.push(``, `Order #${order.shortId} sent to vendor. They'll confirm shortly.`);
 
       const adminLines: string[] = [
         `*New order from ${conversation.customerName}* (${conversation.customerPhone})`,
@@ -1248,7 +1395,7 @@ async function computeBotReply(
           )}`,
         );
       }
-      adminLines.push(``, `Total: ${formatMoney(pendingOrder.total, vendor.currency)}`, ``, `Reply *confirm ${order.id.slice(0, 8)}* or *reject ${order.id.slice(0, 8)}*.`);
+      adminLines.push(``, `Total: ${formatMoney(pendingOrder.total, vendor.currency)}`, ``, `Reply *confirm ${order.shortId}* or *reject ${order.shortId}*.`);
 
       return {
         text: lines.join("\n"),
@@ -1266,8 +1413,89 @@ async function computeBotReply(
     }
   }
 
-  if (looksLikeOrder(body)) {
+  if (looksLikeOrder(body, activeItems)) {
     return await buildPendingOrderState(vendor, conversation, body);
+  }
+
+  // Order status check
+  const statusTriggers = ["status", "my order", "order status", "where is my order", "what happened to my order", "track"];
+  if (startsWithAny(body, statusTriggers) || includesAny(body, statusTriggers)) {
+    const [latestOrder] = await db
+      .select()
+      .from(ordersTable)
+      .where(
+        and(
+          eq(ordersTable.vendorId, vendor.id),
+          eq(ordersTable.customerPhone, conversation.customerPhone),
+        ),
+      )
+      .orderBy(desc(ordersTable.createdAt))
+      .limit(1);
+
+    if (!latestOrder) {
+      return {
+        text: `You don't have any orders yet. Reply *menu* to start one!`,
+        handover: false,
+      };
+    }
+
+    const statusMessages: Record<string, string> = {
+      pending: `⏳ Your order #${latestOrder.shortId} is waiting to be confirmed by the vendor.`,
+      confirmed: `✅ Your order #${latestOrder.shortId} has been confirmed. Awaiting payment.`,
+      paid: `💰 Payment received for order #${latestOrder.shortId}. Your order is being prepared!`,
+      completed: `🎉 Your order #${latestOrder.shortId} is complete!`,
+      rejected: `❌ Your order #${latestOrder.shortId} was not accepted. Reply *menu* to try again or *agent* for help.`,
+      cancelled: `🚫 Your order #${latestOrder.shortId} was cancelled.`,
+    };
+
+    const msg = statusMessages[latestOrder.status] ?? `Your order #${latestOrder.shortId} status: ${latestOrder.status}.`;
+    return { text: msg, handover: false };
+  }
+
+  // Cancel order command
+  const cancelTriggers = ["cancel", "cancel order", "nevermind", "never mind", "i changed my mind"];
+  if (startsWithAny(body, cancelTriggers) || includesAny(body, cancelTriggers)) {
+    // If there's a pending (unconfirmed) order in progress, clear it
+    const pendingOrderResult = await getPendingOrder(vendor.id, conversation.customerPhone);
+    if (pendingOrderResult.status === "found") {
+      await clearPendingOrder(vendor.id, conversation.customerPhone);
+      return {
+        text: `Your pending order was cancelled. Reply *menu* to start a new one!`,
+        handover: false,
+      };
+    }
+
+    // Check for a vendor-pending order (not yet confirmed by vendor)
+    const [latestOrder] = await db
+      .select()
+      .from(ordersTable)
+      .where(
+        and(
+          eq(ordersTable.vendorId, vendor.id),
+          eq(ordersTable.customerPhone, conversation.customerPhone),
+          eq(ordersTable.status, "pending"),
+        ),
+      )
+      .orderBy(desc(ordersTable.createdAt))
+      .limit(1);
+
+    if (latestOrder) {
+      await db
+        .update(ordersTable)
+        .set({ status: "cancelled" })
+        .where(eq(ordersTable.id, latestOrder.id));
+
+      return {
+        text: `Your order #${latestOrder.shortId} has been cancelled. Reply *menu* to start a new one!`,
+        handover: false,
+      };
+    }
+
+    // Already confirmed — can't self-cancel
+    return {
+      text: `Your order has already been confirmed by the vendor. Please reply *agent* if you need to make changes.`,
+      handover: false,
+    };
   }
 
   // Menu request
@@ -1381,20 +1609,17 @@ export async function handleAdminCommand(
     // This prevents rate limiting and server overload
     if (vendor.phoneNumberId) {
       const BATCH_SIZE = 50;
+      let batchIndex = 0;
       for (let i = 0; i < recipients.length; i += BATCH_SIZE) {
         const batch = recipients.slice(i, i + BATCH_SIZE);
-        for (const r of batch) {
-          // Queue each message with moderate priority
-          await queueOutboundMessage(
-            vendor.phoneNumberId,
-            r.phone,
-            message,
-          );
-        }
-        // Add delay between batches to avoid overwhelming the queue
-        if (i + BATCH_SIZE < recipients.length) {
-          await new Promise((resolve) => setTimeout(resolve, 500));
-        }
+        await queueBroadcastMessage({
+          vendorId: vendor.id,
+          phoneNumberId: vendor.phoneNumberId,
+          recipients: batch,
+          message,
+          batchIndex: batchIndex++,
+          batchSize: BATCH_SIZE,
+        });
       }
     }
 
@@ -1581,24 +1806,12 @@ export async function handleAdminCommand(
 
   // menu (vendor side: list current items)
   if (lower === "menu" || lower === "list") {
-    const items = await db
-      .select()
-      .from(menuItemsTable)
-      .where(eq(menuItemsTable.vendorId, vendor.id));
-    if (items.length === 0) return { text: `Your menu is empty. Use *add <name> <price>* to add items.` };
-    const lines = [`*Your menu*`, ``];
-    for (const item of items) {
-      const tag = item.available ? "" : " (unavailable)";
-      lines.push(
-        `- ${item.name} — ${formatMoney(Number(item.price), vendor.currency)}${tag}`,
-      );
-    }
-    return { text: lines.join("\n") };
+    return await handleAdminShowMenu(vendor);
   }
 
   // add <name> <price>
-  if (lower.startsWith("add ") || /^[a-z].* \d+(\.\d+)?$/i.test(body)) {
-    const text = lower.startsWith("add ") ? body.slice(4).trim() : body;
+  if (lower.startsWith("add ")) {
+    const text = body.slice(4).trim();
     const m = text.match(/^(.+?)\s+(\d+(?:\.\d+)?)$/);
     if (!m) {
       return {
@@ -1654,7 +1867,7 @@ export async function handleAdminCommand(
     const lines: string[] = [`*Pending orders*`, ``];
     for (const o of pending) {
       lines.push(
-        `#${o.id.slice(0, 8)} — ${o.customerName} — ${formatMoney(Number(o.total), vendor.currency)}`,
+        `#${o.shortId} — ${o.customerName} — ${formatMoney(Number(o.total), vendor.currency)}`,
       );
     }
     lines.push(``, `Reply *confirm <id>* or *reject <id>*.`);
@@ -1669,7 +1882,7 @@ export async function handleAdminCommand(
       : await findLatestPendingOrder(vendor.id);
     if (!order) return { text: `No matching order to confirm.` };
     if (order.status !== "pending") {
-      return { text: `Order #${order.id.slice(0, 8)} is already ${order.status}.` };
+      return { text: `Order #${order.shortId} is already ${order.status}.` };
     }
     await db
       .update(ordersTable)
@@ -1681,7 +1894,7 @@ export async function handleAdminCommand(
       paymentInstructions(vendor, Number(order.total)),
     );
     return {
-      text: `Confirmed #${order.id.slice(0, 8)} for ${order.customerName}. Payment instructions were sent to the customer.`,
+      text: `Confirmed #${order.shortId} for ${order.customerName}. Payment instructions were sent to the customer.`,
     };
   }
 
@@ -1693,7 +1906,7 @@ export async function handleAdminCommand(
       : await findLatestPendingOrder(vendor.id);
     if (!order) return { text: `No matching order to reject.` };
     if (order.status !== "pending") {
-      return { text: `Order #${order.id.slice(0, 8)} is already ${order.status}.` };
+      return { text: `Order #${order.shortId} is already ${order.status}.` };
     }
     await db
       .update(ordersTable)
@@ -1702,10 +1915,10 @@ export async function handleAdminCommand(
     await notifyCustomer(
       vendor,
       order.customerPhone,
-      `Sorry, your order #${order.id.slice(0, 8)} couldn't be accepted right now. Reply *menu* to try again.`,
+      `Sorry, your order #${order.shortId} couldn't be accepted right now. Reply *menu* to try again.`,
     );
     return {
-      text: `Rejected #${order.id.slice(0, 8)}. The customer was notified.`,
+      text: `Rejected #${order.shortId}. The customer was notified.`,
     };
   }
 
@@ -1717,7 +1930,7 @@ export async function handleAdminCommand(
       : await findLatestConfirmedOrder(vendor.id);
     if (!order) return { text: `No matching order to mark paid.` };
     if (order.paymentStatus === "paid") {
-      return { text: `Order #${order.id.slice(0, 8)} is already marked paid.` };
+      return { text: `Order #${order.shortId} is already marked paid.` };
     }
     await db
       .update(ordersTable)
@@ -1754,10 +1967,10 @@ export async function handleAdminCommand(
     await notifyCustomer(
       vendor,
       order.customerPhone,
-      `Payment received for order #${order.id.slice(0, 8)}. Thank you!`,
+      `Payment received for order #${order.shortId}. Thank you!`,
     );
     return {
-      text: `Payment confirmed on #${order.id.slice(0, 8)}. The customer was notified.`,
+      text: `Payment confirmed on #${order.shortId}. The customer was notified.`,
     };
   }
 
@@ -1954,7 +2167,7 @@ async function handleAdminConfirmOrder(
     : await findLatestPendingOrder(vendor.id);
   if (!order) return { text: `No matching order to confirm.` };
   if (order.status !== "pending") {
-    return { text: `Order #${order.id.slice(0, 8)} is already ${order.status}.` };
+    return { text: `Order #${order.shortId} is already ${order.status}.` };
   }
   await db
     .update(ordersTable)
@@ -1966,7 +2179,7 @@ async function handleAdminConfirmOrder(
     paymentInstructions(vendor, Number(order.total)),
   );
   return {
-    text: `Confirmed #${order.id.slice(0, 8)} for ${order.customerName}. Payment instructions were sent to the customer.`,
+    text: `Confirmed #${order.shortId} for ${order.customerName}. Payment instructions were sent to the customer.`,
   };
 }
 
@@ -1979,7 +2192,7 @@ async function handleAdminRejectOrder(
     : await findLatestPendingOrder(vendor.id);
   if (!order) return { text: `No matching order to reject.` };
   if (order.status !== "pending") {
-    return { text: `Order #${order.id.slice(0, 8)} is already ${order.status}.` };
+    return { text: `Order #${order.shortId} is already ${order.status}.` };
   }
   await db
     .update(ordersTable)
@@ -1988,10 +2201,10 @@ async function handleAdminRejectOrder(
   await notifyCustomer(
     vendor,
     order.customerPhone,
-    `Sorry, your order #${order.id.slice(0, 8)} couldn't be accepted right now. Reply *menu* to try again.`,
+    `Sorry, your order #${order.shortId} couldn't be accepted right now. Reply *menu* to try again.`,
   );
   return {
-    text: `Rejected #${order.id.slice(0, 8)}. The customer was notified.`,
+    text: `Rejected #${order.shortId}. The customer was notified.`,
   };
 }
 
@@ -2004,7 +2217,7 @@ async function handleAdminConfirmPayment(
     : await findLatestConfirmedOrder(vendor.id);
   if (!order) return { text: `No matching order to mark paid.` };
   if (order.paymentStatus === "paid") {
-    return { text: `Order #${order.id.slice(0, 8)} is already marked paid.` };
+    return { text: `Order #${order.shortId} is already marked paid.` };
   }
   await db
     .update(ordersTable)
@@ -2041,10 +2254,10 @@ async function handleAdminConfirmPayment(
   await notifyCustomer(
     vendor,
     order.customerPhone,
-    `Payment received for order #${order.id.slice(0, 8)}. Thank you!`,
+    `Payment received for order #${order.shortId}. Thank you!`,
   );
   return {
-    text: `Payment confirmed on #${order.id.slice(0, 8)}. The customer was notified.`,
+    text: `Payment confirmed on #${order.shortId}. The customer was notified.`,
   };
 }
 

@@ -1,4 +1,5 @@
 import { Router, type IRouter } from "express";
+import { z } from "zod";
 import { db } from "@workspace/db";
 import {
   vendorsTable,
@@ -6,6 +7,7 @@ import {
   ordersTable,
   customersTable,
   conversationsTable,
+  vendorAdminsTable,
 } from "@workspace/db";
 import { and, eq, inArray, sql, desc } from "drizzle-orm";
 import {
@@ -45,6 +47,7 @@ router.post("/vendors", async (req, res) => {
         bankAccountNumber: data.bankAccountNumber ?? null,
         bankAccountHolder: data.bankAccountHolder ?? null,
         welcomeMessage: data.welcomeMessage ?? null,
+        requiresDeliveryAddress: data.requiresDeliveryAddress ?? false,
       })
       .returning();
     return res.status(201).json(toVendor(created!));
@@ -115,19 +118,6 @@ router.get("/vendors/:vendorId", async (req, res) => {
       ),
     );
 
-  res.json({
-    ...toVendor(v),
-    stats: {
-      totalOrders,
-      pendingOrders,
-      confirmedOrders,
-      paidOrders,
-      revenue,
-      menuItems: Number(menuItems),
-      customers: Number(customers),
-      openConversations: Number(openConversations),
-    },
-  });
   return res.json({
     ...toVendor(v),
     stats: {
@@ -164,6 +154,7 @@ router.patch("/vendors/:vendorId", async (req, res) => {
     "bankAccountHolder",
     "currency",
     "welcomeMessage",
+    "requiresDeliveryAddress",
   ] as const) {
     if (body.data[k] !== undefined) updates[k] = body.data[k];
   }
@@ -183,6 +174,73 @@ router.delete("/vendors/:vendorId", async (req, res) => {
   const params = DeleteVendorParams.safeParse(req.params);
   if (!params.success) return res.status(400).json({ error: "invalid_params" });
   await db.delete(vendorsTable).where(eq(vendorsTable.id, params.data.vendorId));
+  return res.status(204).end();
+});
+
+const VendorAdminBody = z.object({
+  phone: z.string().min(6),
+  name: z.string().optional(),
+  role: z.enum(["owner", "staff"]).optional(),
+});
+
+router.get("/vendors/:vendorId/admins", async (req, res) => {
+  const params = GetVendorParams.safeParse(req.params);
+  if (!params.success) return res.status(400).json({ error: "invalid_params" });
+  const admins = await db
+    .select()
+    .from(vendorAdminsTable)
+    .where(eq(vendorAdminsTable.vendorId, params.data.vendorId));
+  return res.json(admins.map((admin) => ({
+    id: admin.id,
+    vendorId: admin.vendorId,
+    phone: admin.phone,
+    name: admin.name,
+    role: admin.role,
+    createdAt: admin.createdAt.toISOString(),
+  })));
+});
+
+router.post("/vendors/:vendorId/admins", async (req, res) => {
+  const params = GetVendorParams.safeParse(req.params);
+  if (!params.success) return res.status(400).json({ error: "invalid_params" });
+  const bodyResult = VendorAdminBody.safeParse(req.body);
+  if (!bodyResult.success) return res.status(400).json({ error: "invalid_body", details: bodyResult.error.issues });
+
+  const [created] = await db
+    .insert(vendorAdminsTable)
+    .values({
+      vendorId: params.data.vendorId,
+      phone: bodyResult.data.phone,
+      name: bodyResult.data.name ?? null,
+      role: bodyResult.data.role ?? "staff",
+    })
+    .returning();
+
+  return res.status(201).json({
+    id: created!.id,
+    vendorId: created!.vendorId,
+    phone: created!.phone,
+    name: created!.name,
+    role: created!.role,
+    createdAt: created!.createdAt.toISOString(),
+  });
+});
+
+router.delete("/vendors/:vendorId/admins/:adminId", async (req, res) => {
+  const params = z.object({
+    vendorId: z.string(),
+    adminId: z.string(),
+  }).safeParse(req.params);
+  if (!params.success) return res.status(400).json({ error: "invalid_params" });
+
+  await db
+    .delete(vendorAdminsTable)
+    .where(
+      and(
+        eq(vendorAdminsTable.vendorId, params.data.vendorId),
+        eq(vendorAdminsTable.id, params.data.adminId),
+      ),
+    );
   return res.status(204).end();
 });
 

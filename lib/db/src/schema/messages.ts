@@ -3,6 +3,7 @@ import {
   text,
   uuid,
   timestamp,
+  index,
 } from "drizzle-orm/pg-core";
 import { conversationsTable } from "./conversations";
 
@@ -17,7 +18,10 @@ export const messagesTable = pgTable("messages", {
   createdAt: timestamp("created_at", { withTimezone: true })
     .notNull()
     .defaultNow(),
-});
+}, (table) => ({
+  conversationCreatedIdx: index("conversation_created_idx")
+    .on(table.conversationId, table.createdAt),
+}));
 
 export type MessageRow = typeof messagesTable.$inferSelect;
 export type InsertMessage = typeof messagesTable.$inferInsert;

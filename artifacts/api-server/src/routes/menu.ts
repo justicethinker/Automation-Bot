@@ -2,6 +2,7 @@ import { Router, type IRouter } from "express";
 import { db } from "@workspace/db";
 import { menuItemsTable } from "@workspace/db";
 import { eq, asc } from "drizzle-orm";
+import { invalidateFuseCache } from "../lib/fuzzy-match";
 import {
   CreateMenuItemBody,
   CreateMenuItemParams,
@@ -41,6 +42,8 @@ router.post("/vendors/:vendorId/menu", async (req, res) => {
       available: body.data.available ?? true,
     })
     .returning();
+  // Invalidate fuzzy match cache for this vendor
+  invalidateFuseCache(params.data.vendorId);
   return res.status(201).json(toMenuItem(created!));
 });
 
@@ -66,13 +69,22 @@ router.patch("/menu/:itemId", async (req, res) => {
     .where(eq(menuItemsTable.id, params.data.itemId))
     .returning();
   if (!updated) return res.status(404).json({ error: "not_found" });
+  // Invalidate fuzzy match cache for this vendor
+  invalidateFuseCache(updated.vendorId);
   return res.json(toMenuItem(updated));
 });
 
 router.delete("/menu/:itemId", async (req, res) => {
   const params = DeleteMenuItemParams.safeParse(req.params);
   if (!params.success) return res.status(400).json({ error: "invalid_params" });
+  // Fetch the item to get vendorId before deleting
+  const [item] = await db
+    .select()
+    .from(menuItemsTable)
+    .where(eq(menuItemsTable.id, params.data.itemId));
   await db.delete(menuItemsTable).where(eq(menuItemsTable.id, params.data.itemId));
+  // Invalidate fuzzy match cache if item existed
+  if (item) invalidateFuseCache(item.vendorId);
   return res.status(204).end();
 });
 

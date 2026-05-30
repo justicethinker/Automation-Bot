@@ -26,6 +26,7 @@ export function toVendor(row: VendorRow) {
     currency: row.currency,
     welcomeMessage: row.welcomeMessage,
     followUpsEnabled: row.followUpsEnabled,
+    requiresDeliveryAddress: row.requiresDeliveryAddress,
     createdAt: row.createdAt.toISOString(),
   };
 }

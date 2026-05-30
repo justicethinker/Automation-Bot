@@ -1,4 +1,5 @@
 import { Router, type IRouter } from "express";
+import { requireApiKey } from "../middleware/auth";
 import healthRouter from "./health";
 import vendorsRouter from "./vendors";
 import menuRouter from "./menu";
@@ -14,15 +15,15 @@ import broadcastsRouter from "./broadcasts";
 const router: IRouter = Router();
 
 router.use(healthRouter);
-router.use(vendorsRouter);
-router.use(menuRouter);
-router.use(ordersRouter);
-router.use(conversationsRouter);
-router.use(customersRouter);
-router.use(paymentsRouter);
-router.use(dashboardRouter);
+router.use("/vendors", requireApiKey, vendorsRouter);
+router.use("/menu", requireApiKey, menuRouter);
+router.use("/orders", requireApiKey, ordersRouter);
+router.use("/conversations", requireApiKey, conversationsRouter);
+router.use("/customers", requireApiKey, customersRouter);
+router.use("/payments", requireApiKey, paymentsRouter);
+router.use("/dashboard", requireApiKey, dashboardRouter);
 router.use(webhookRouter);
-router.use(promotionsRouter);
-router.use(broadcastsRouter);
+router.use("/promotions", requireApiKey, promotionsRouter);
+router.use("/broadcasts", requireApiKey, broadcastsRouter);
 
 export default router;

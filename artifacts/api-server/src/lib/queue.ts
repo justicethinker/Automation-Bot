@@ -194,6 +194,17 @@ export async function queueOutboundMessage(
 }
 
 /**
+ * Add broadcast message job to broadcast queue
+ * Sends message to multiple recipients in batches
+ */
+export async function queueBroadcastMessage(job: BroadcastMessageJob): Promise<void> {
+  await broadcastQueue.add(job, {
+    attempts: 3,
+    backoff: { type: "exponential", delay: 5000 },
+  });
+}
+
+/**
  * Health check for queue infrastructure
  */
 export async function checkQueueHealth(): Promise<{

@@ -1,4 +1,4 @@
-import { incomingQueue, outboundQueue, broadcastQueue, IncomingMessageJob, OutboundMessageJob } from "./queue";
+import { incomingQueue, outboundQueue, broadcastQueue, IncomingMessageJob, OutboundMessageJob, BroadcastMessageJob } from "./queue";
 import { handleIncomingMessage } from "./bot";
 import { sendWhatsAppMessage } from "./whatsapp";
 import { db } from "@workspace/db";

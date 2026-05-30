@@ -79,6 +79,7 @@ export const ListVendorsResponseItem = zod.object({
   currency: zod.string().optional(),
   welcomeMessage: zod.string().nullish(),
   followUpsEnabled: zod.boolean().optional(),
+  requiresDeliveryAddress: zod.boolean().optional(),
   createdAt: zod.coerce.date(),
 });
 export const ListVendorsResponse = zod.array(ListVendorsResponseItem);
@@ -101,6 +102,7 @@ export const CreateVendorBody = zod.object({
   bankAccountHolder: zod.string().optional(),
   currency: zod.string().optional(),
   welcomeMessage: zod.string().optional(),
+  requiresDeliveryAddress: zod.boolean().optional(),
 });
 
 /**
@@ -126,6 +128,7 @@ export const GetVendorResponse = zod
     currency: zod.string().optional(),
     welcomeMessage: zod.string().nullish(),
     followUpsEnabled: zod.boolean().optional(),
+    requiresDeliveryAddress: zod.boolean().optional(),
     createdAt: zod.coerce.date(),
   })
   .and(
@@ -164,6 +167,7 @@ export const UpdateVendorBody = zod.object({
   bankAccountHolder: zod.string().optional(),
   currency: zod.string().optional(),
   welcomeMessage: zod.string().optional(),
+  requiresDeliveryAddress: zod.boolean().optional(),
 });
 
 export const UpdateVendorResponse = zod.object({
@@ -181,6 +185,7 @@ export const UpdateVendorResponse = zod.object({
   currency: zod.string().optional(),
   welcomeMessage: zod.string().nullish(),
   followUpsEnabled: zod.boolean().optional(),
+  requiresDeliveryAddress: zod.boolean().optional(),
   createdAt: zod.coerce.date(),
 });
 
