@@ -1,4 +1,4 @@
-import { createHmac } from "crypto";
+import { createHmac, timingSafeEqual } from "crypto";
 import { logger } from "./logger";
 
 /**
@@ -35,9 +35,15 @@ export function verifyWebhookSignature(
   const expectedSignature = hmac.digest("hex");
 
   // Constant-time comparison to prevent timing attacks
-  const isValid =
-    signatureHex.length === expectedSignature.length &&
-    signatureHex === expectedSignature;
+  let isValid = false;
+  try {
+    const sigBuffer = Buffer.from(signatureHex, 'hex');
+    const expectedBuffer = Buffer.from(expectedSignature, 'hex');
+    isValid = sigBuffer.length === expectedBuffer.length &&
+      timingSafeEqual(sigBuffer, expectedBuffer);
+  } catch {
+    isValid = false;
+  }
 
   if (!isValid) {
     logger.warn(

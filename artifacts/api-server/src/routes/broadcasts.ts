@@ -17,6 +17,7 @@ import {
 import { toBroadcast } from "../lib/serializers";
 import { hasFeature } from "../lib/plans";
 import { sendWhatsAppMessage } from "../lib/whatsapp";
+import { queueOutboundMessage, queueBroadcastMessage } from "../lib/queue";
 
 const router: IRouter = Router();
 
@@ -65,12 +66,21 @@ router.post("/vendors/:vendorId/broadcasts", async (req, res) => {
       ),
     );
 
-  for (const r of recipients) {
-    await sendWhatsAppMessage({
-      phoneNumberId: vendor.phoneNumberId,
-      to: r.phone,
-      text: body.data.message,
-    });
+  // Queue messages in batches for reliable delivery with retries
+  if (vendor.phoneNumberId) {
+    const BATCH_SIZE = 50;
+    let batchIndex = 0;
+    for (let i = 0; i < recipients.length; i += BATCH_SIZE) {
+      const batch = recipients.slice(i, i + BATCH_SIZE);
+      await queueBroadcastMessage({
+        vendorId: vendor.id,
+        phoneNumberId: vendor.phoneNumberId,
+        recipients: batch,
+        message: body.data.message,
+        batchIndex: batchIndex++,
+        batchSize: BATCH_SIZE,
+      });
+    }
   }
 
   const [created] = await db
@@ -132,11 +142,13 @@ router.post("/vendors/:vendorId/follow-ups/run", async (req, res) => {
       `Hi ${t.name}, this is a reminder about your order #${t.shortId} ` +
       `at ${vendor.name} (total ${vendor.currency} ${Number(t.total).toFixed(2)}). ` +
       `Reply *paid* once you've completed payment, or *agent* if you need help.`;
-    await sendWhatsAppMessage({
-      phoneNumberId: vendor.phoneNumberId,
-      to: t.phone,
-      text,
-    });
+    if (vendor.phoneNumberId) {
+      await queueOutboundMessage(
+        vendor.phoneNumberId,
+        t.phone,
+        text,
+      );
+    }
 
     // Surface the reminder in the customer's conversation log too.
     const [conv] = await db

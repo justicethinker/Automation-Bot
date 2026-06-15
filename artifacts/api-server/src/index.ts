@@ -39,6 +39,13 @@ Reference .env.example for a complete list of required variables.`;
   }
 
   logger.info("✅ All required environment variables are set");
+
+  // Warn about optional but important env vars
+  const optional = ["GEMINI_API_KEY"];
+  const missingOptional = optional.filter((key) => !process.env[key]);
+  if (missingOptional.length > 0) {
+    logger.warn({ missingOptional }, "Optional environment variables not set — some features will be degraded");
+  }
 }
 
 // Validate environment before anything else

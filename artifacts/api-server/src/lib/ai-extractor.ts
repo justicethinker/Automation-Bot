@@ -38,7 +38,7 @@ function parseJsonResponse(content: string): unknown {
 
 async function runGemini(
   prompt: string,
-  timeoutMs = 5000,
+  timeoutMs = 10000,
 ): Promise<string | null> {
   const client = getGeminiClient();
   if (!client) {
@@ -82,8 +82,12 @@ async function runGemini(
  */
 export async function aiExtractOrder(
   text: string,
+  menuItems?: Array<{ name: string; price: string }>,
 ): Promise<ExtractedOrder[] | null> {
-  const prompt = `Extract food order details from this message. Return ONLY valid JSON. Use this exact shape:\n{\n  "items": [\n    { "item": "<product name>", "quantity": <integer> }\n  ]\n}\nIf you cannot extract any order items, return null.\n\nMessage: ${text}`;
+  const menuContext = menuItems && menuItems.length > 0
+    ? `\n\nAvailable menu items:\n${menuItems.map((m) => `- ${m.name} (${m.price})`).join("\n")}\n\nOnly extract items that closely match items from this menu.`
+    : "";
+  const prompt = `Extract food order details from this customer message. Return ONLY valid JSON. Use this exact shape:\n{\n  "items": [\n    { "item": "<product name exactly as on menu>", "quantity": <integer> }\n  ]\n}\nIf you cannot extract any order items, return null.${menuContext}\n\nCustomer message: ${text}`;
 
   const content = await runGemini(prompt);
   if (!content) return null;
@@ -133,8 +137,12 @@ export async function aiExtractOrder(
  */
 export async function aiExtractAdminIntent(
   text: string,
+  recentHistory?: Array<{ role: "admin" | "bot"; text: string }>,
 ): Promise<ExtractedAdminIntent | null> {
-  const prompt = `Analyze this vendor message and return ONLY valid JSON in the form {"intent":"<intent>","entities":{...}}. Allowed intents: add_menu_item, remove_menu_item, update_price, mark_unavailable, mark_available, show_menu, confirm_order, reject_order, confirm_payment, switch_human, switch_bot. Use entity names such as itemName, price, orderId, customerPhone. If the intent is unclear, return {"intent":"unknown","entities":{}}. Do not include any extra text.\n\nMessage: ${text}`;
+  const historyContext = recentHistory && recentHistory.length > 0
+    ? `\n\nRecent conversation for context:\n${recentHistory.map((m) => `${m.role === "admin" ? "Vendor" : "Bot"}: ${m.text}`).join("\n")}\n\nNow analyze the LATEST message below.`
+    : "";
+  const prompt = `Analyze this vendor message and return ONLY valid JSON in the form {"intent":"<intent>","entities":{...}}. Allowed intents: add_menu_item, remove_menu_item, update_price, mark_unavailable, mark_available, show_menu, confirm_order, reject_order, confirm_payment, switch_human, switch_bot. Use entity names such as itemName, price, orderId, customerPhone. If the intent is unclear, return {"intent":"unknown","entities":{}}. Do not include any extra text.${historyContext}\n\nMessage: ${text}`;
 
   const content = await runGemini(prompt);
   if (!content) return null;

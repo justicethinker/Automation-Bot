@@ -7,7 +7,7 @@ import {
   SimulateIncomingMessageBody,
 } from "@workspace/api-zod";
 import { handleIncomingMessage } from "../lib/bot";
-import { queueIncomingMessage } from "../lib/queue";
+import { queueIncomingMessage, queueOutboundMessage } from "../lib/queue";
 import { logger } from "../lib/logger";
 import { shouldRateLimitCustomer } from "../lib/rate-limiter-redis";
 import { verifyWebhookSignature } from "../lib/webhook-signature";
