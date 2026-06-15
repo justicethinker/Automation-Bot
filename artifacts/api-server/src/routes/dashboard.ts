@@ -14,13 +14,20 @@ import { hasFeature } from "../lib/plans";
 
 const router: IRouter = Router();
 
-// NOTE: This is a platform-admin endpoint. Access is gated by the global API_SECRET_KEY.
-// It intentionally returns cross-vendor aggregate data for the platform operator.
-router.get("/dashboard/summary", async (_req, res) => {
-  const vendors = await db.select().from(vendorsTable);
-  const totalVendors = vendors.length;
-  const starterVendors = vendors.filter((v) => v.plan === "starter").length;
-  const proVendors = vendors.filter((v) => v.plan === "pro").length;
+// NOTE: This endpoint returns a summary of the authenticated vendor's data only.
+// It is NOT a platform-admin endpoint - it is vendor-scoped for security.
+router.get("/vendors/:vendorId/summary", async (req, res) => {
+  const { vendorId } = req.params;
+  if (!vendorId || typeof vendorId !== "string") {
+    return res.status(400).json({ error: "invalid_vendor_id" });
+  }
+
+  const [vendor] = await db
+    .select()
+    .from(vendorsTable)
+    .where(eq(vendorsTable.id, vendorId))
+    .limit(1);
+  if (!vendor) return res.status(404).json({ error: "vendor_not_found" });
 
   const orderRows = await db
     .select({
@@ -29,6 +36,7 @@ router.get("/dashboard/summary", async (_req, res) => {
       revenue: sql<number>`coalesce(sum(${ordersTable.total})::float, 0)`,
     })
     .from(ordersTable)
+    .where(eq(ordersTable.vendorId, vendorId))
     .groupBy(ordersTable.status);
 
   let totalOrders = 0;
@@ -45,43 +53,42 @@ router.get("/dashboard/summary", async (_req, res) => {
   const [{ openConversations }] = await db
     .select({ openConversations: sql<number>`count(*)::int` })
     .from(conversationsTable)
-    .where(inArray(conversationsTable.status, ["bot", "human"]));
+    .where(
+      and(
+        eq(conversationsTable.vendorId, vendorId),
+        inArray(conversationsTable.status, ["bot", "human"])
+      )
+    );
 
   const todayStart = new Date();
   todayStart.setHours(0, 0, 0, 0);
   const [{ messagesToday }] = await db
     .select({ messagesToday: sql<number>`count(*)::int` })
     .from(messagesTable)
-    .where(gte(messagesTable.createdAt, todayStart));
+    .where(
+      and(
+        sql`${messagesTable.vendorId} = ${vendorId}`,
+        gte(messagesTable.createdAt, todayStart)
+      )
+    );
 
-  const revenueByVendorRows = await db
-    .select({
-      vendorId: ordersTable.vendorId,
-      vendorName: vendorsTable.name,
-      revenue: sql<number>`coalesce(sum(${ordersTable.total})::float, 0)`,
-    })
-    .from(ordersTable)
-    .innerJoin(vendorsTable, eq(vendorsTable.id, ordersTable.vendorId))
-    .where(inArray(ordersTable.status, ["paid", "completed"]))
-    .groupBy(ordersTable.vendorId, vendorsTable.name)
-    .orderBy(desc(sql`coalesce(sum(${ordersTable.total})::float, 0)`))
-    .limit(8);
+  const totalCustomers = await db
+    .select({ count: sql<number>`count(distinct ${customersTable.phone})::int` })
+    .from(customersTable)
+    .where(eq(customersTable.vendorId, vendorId))
+    .then(rows => rows[0]?.count ?? 0);
 
   res.json({
-    totalVendors,
-    starterVendors,
-    proVendors,
+    vendorId,
+    vendorName: vendor.name,
+    plan: vendor.plan,
     totalOrders,
     pendingOrders,
     revenue,
     openConversations: Number(openConversations),
     messagesToday: Number(messagesToday),
+    totalCustomers,
     ordersByStatus,
-    revenueByVendor: revenueByVendorRows.map((r) => ({
-      vendorId: r.vendorId,
-      vendorName: r.vendorName,
-      revenue: Number(r.revenue),
-    })),
   });
 });
 

@@ -48,7 +48,7 @@ async function runGemini(
 
   const timeoutPromise = new Promise<never>((_, reject) => {
     setTimeout(() => {
-      reject(new Error("AI extraction timeout: exceeded 5 seconds"));
+      reject(new Error("AI extraction timeout: exceeded 10 seconds"));
     }, timeoutMs);
   });
 
@@ -83,11 +83,15 @@ async function runGemini(
 export async function aiExtractOrder(
   text: string,
   menuItems?: Array<{ name: string; price: string }>,
+  recentHistory?: Array<{ role: "customer" | "bot"; text: string }>,
 ): Promise<ExtractedOrder[] | null> {
   const menuContext = menuItems && menuItems.length > 0
     ? `\n\nAvailable menu items:\n${menuItems.map((m) => `- ${m.name} (${m.price})`).join("\n")}\n\nOnly extract items that closely match items from this menu.`
     : "";
-  const prompt = `Extract food order details from this customer message. Return ONLY valid JSON. Use this exact shape:\n{\n  "items": [\n    { "item": "<product name exactly as on menu>", "quantity": <integer> }\n  ]\n}\nIf you cannot extract any order items, return null.${menuContext}\n\nCustomer message: ${text}`;
+  const historyContext = recentHistory && recentHistory.length > 0
+    ? `\n\nRecent conversation for context:\n${recentHistory.map((m) => `${m.role === "customer" ? "Customer" : "Bot"}: ${m.text}`).join("\n")}\n\nNow extract items from the LATEST message below.`
+    : "";
+  const prompt = `Extract food order details from this customer message. Return ONLY valid JSON. Use this exact shape:\n{\n  "items": [\n    { "item": "<product name exactly as on menu>", "quantity": <integer> }\n  ]\n}\nIf you cannot extract any order items, return null.${menuContext}${historyContext}\n\nCustomer message: ${text}`;
 
   const content = await runGemini(prompt);
   if (!content) return null;
@@ -167,6 +171,49 @@ export async function aiExtractAdminIntent(
     };
   } catch (err) {
     logger.warn({ err }, "AI admin intent invalid JSON");
+    return null;
+  }
+}
+
+export type CustomerIntent = {
+  intent: "order" | "menu" | "status" | "price_inquiry" | "timing_inquiry" | "help" | "unknown";
+  confidence: number;  // 0-1
+};
+
+/**
+ * Detect customer intent from ambiguous messages
+ * Helps the bot interpret messages like "how much is the rice?" or "when will my food arrive?"
+ */
+export async function detectCustomerIntent(
+  text: string,
+  menuItems?: Array<{ name: string; price: string }>,
+): Promise<CustomerIntent | null> {
+  const menuContext = menuItems && menuItems.length > 0
+    ? `\n\nAvailable menu items:\n${menuItems.map((m) => `- ${m.name} (${m.price})`).join("\n")}`
+    : "";
+  
+  const prompt = `Analyze this customer message and return ONLY valid JSON in the form {"intent":"<intent>","confidence":<0-1>}. 
+Possible intents: "order" (wants to order items), "menu" (wants to see/ask about menu), "status" (asking about order status), "price_inquiry" (asking about prices), "timing_inquiry" (asking delivery/preparation time), "help" (needs help), "unknown" (unclear).${menuContext}
+
+Return JSON like: {"intent":"menu","confidence":0.95}
+
+Message: ${text}`;
+
+  const content = await runGemini(prompt);
+  if (!content) return null;
+
+  try {
+    const parsed = parseJsonResponse(content) as any;
+    if (!parsed || typeof parsed.intent !== "string" || typeof parsed.confidence !== "number") {
+      return null;
+    }
+
+    return {
+      intent: parsed.intent as CustomerIntent["intent"],
+      confidence: Math.min(1, Math.max(0, parsed.confidence)),
+    };
+  } catch (err) {
+    logger.warn({ err }, "Customer intent detection failed");
     return null;
   }
 }

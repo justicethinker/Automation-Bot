@@ -379,7 +379,7 @@ function parseOrderLine(body: string): ParsedItem[] {
   return result;
 }
 
-function looksLikeOrder(body: string, menuItems: MenuItemRow[]): boolean {
+function looksLikeOrder(body: string, menuItems: MenuItemRow[], vendorId: string): boolean {
   const trimmed = body.trim();
 
   // Starts with explicit order triggers
@@ -397,7 +397,7 @@ function looksLikeOrder(body: string, menuItems: MenuItemRow[]): boolean {
     const normalized = normalizeOrderText(trimmed);
     const words = normalized.split(/\s+/).filter(w => w.length > 2);
     for (const word of words) {
-      const result = findBestMenuMatch(word, menuItems, "");
+      const result = findBestMenuMatch(word, menuItems, vendorId);
       if (result.kind === "exact" || result.kind === "unique") return true;
     }
   }
@@ -694,8 +694,9 @@ async function resolvePendingClarification(
 ): Promise<BotReply | null> {
   if (!pendingOrder.pendingClarification) return null;
 
-  const activeItems = await listActiveMenuItems(vendor);
+  // Query all menu items once, then filter in-memory for active items
   const allItems = await listAllMenuItems(vendor);
+  const activeItems = allItems.filter((item) => item.available);
   const state = pendingOrder.pendingClarification;
   const trimmed = body.trim();
 
@@ -1502,7 +1503,7 @@ async function computeBotReply(
   }
 
   // ── Order detection (after cancel/status to prevent false matches) ──
-  if (looksLikeOrder(body, activeItems)) {
+  if (looksLikeOrder(body, activeItems, vendor.id)) {
     return await buildPendingOrderState(vendor, conversation, body);
   }
 
@@ -1521,14 +1522,11 @@ async function computeBotReply(
 
   // ── AI-powered fallback for ambiguous messages (Fix 5.4) ──
   try {
-    const historyContext = conversationHistory.length > 0
-      ? conversationHistory.map((m) => `${m.role === "customer" ? "Customer" : "Bot"}: ${m.text}`).join("\n")
-      : "";
-    const menuContext = activeItems.length > 0
-      ? activeItems.map((item) => `- ${item.name} (${formatMoney(Number(item.price), vendor.currency)})`).join("\n")
-      : "";
-
-    const aiResponse = await aiExtractOrder(body, activeItems.map((item) => ({ name: item.name, price: item.price })));
+    const aiResponse = await aiExtractOrder(
+      body,
+      activeItems.map((item) => ({ name: item.name, price: item.price })),
+      conversationHistory,
+    );
     if (aiResponse && aiResponse.length > 0) {
       // The AI found order items in an ambiguously phrased message
       return await buildPendingOrderState(vendor, conversation, body);
@@ -1540,12 +1538,14 @@ async function computeBotReply(
   // Fallback
   return {
     text: [
-      `Hmm, I didn't quite get that! Here's what I can help with:`,
+      `I'm not quite sure what you mean! 🤔 Let me help:`,
       ``,
       `📋 *menu* — see what we offer`,
       `🛒 *order <item> x<qty>* — place an order`,
-      `📍 *status* — check your order`,
-      `🙋 *agent* — reach a human`,
+      `📍 *status* — check your order status`,
+      `🙋 *agent* — reach a real person for questions`,
+      ``,
+      `Or just reply with a menu item number!`,
     ].join("\n"),
     handover: false,
   };
