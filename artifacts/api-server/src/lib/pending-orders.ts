@@ -113,8 +113,6 @@ export async function getPendingOrder(
   customerPhone: string,
 ): Promise<{ status: "found" | "expired" | "not_found"; order?: PendingOrder }> {
   try {
-    await cleanupExpiredPendingOrders(vendorId);
-
     const rows = await db
       .select()
       .from(pendingOrdersTable)

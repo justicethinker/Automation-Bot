@@ -286,11 +286,14 @@ async function notifyCustomer(
 ): Promise<void> {
   const conversation = await findOrCreateConversation(vendor, customerPhone, "Customer");
   await recordMessage(conversation.id, "out", "bot", text);
-  await sendWhatsAppMessage({
-    phoneNumberId: vendor.phoneNumberId,
-    to: customerPhone,
-    text,
-  });
+  // Use queue for reliable delivery with retries
+  if (vendor.phoneNumberId) {
+    await queueOutboundMessage(
+      vendor.phoneNumberId,
+      customerPhone,
+      text,
+    );
+  }
 }
 
 function pendingResolvedItemToOrderItem(
@@ -392,21 +395,10 @@ function looksLikeOrder(body: string, menuItems: MenuItemRow[]): boolean {
   // This makes the detection vendor-agnostic
   if (menuItems.length > 0) {
     const normalized = normalizeOrderText(trimmed);
-    const tokens = normalized.split(/[\s,;]+/).filter(Boolean);
-    
-    for (const token of tokens) {
-      if (token.length < 2) continue; // Skip very short tokens
-      
-      // Try fuzzy matching this token against menu item names
-      for (const item of menuItems) {
-        const itemNameLower = item.name.toLowerCase();
-        const tokenLower = token.toLowerCase();
-        
-        // Exact substring match
-        if (itemNameLower.includes(tokenLower) || tokenLower.includes(itemNameLower.split(" ")[0]!)) {
-          return true;
-        }
-      }
+    const words = normalized.split(/\s+/).filter(w => w.length > 2);
+    for (const word of words) {
+      const result = findBestMenuMatch(word, menuItems, "");
+      if (result.kind === "exact" || result.kind === "unique") return true;
     }
   }
 
@@ -454,8 +446,8 @@ async function buildPendingOrderState(
   conversation: ConversationRow,
   body: string,
 ): Promise<BotReply> {
-  const activeItems = await listActiveMenuItems(vendor);
   const allItems = await listAllMenuItems(vendor);
+  const activeItems = allItems.filter((item) => item.available);
   if (activeItems.length === 0) {
     return {
       text: `Our menu is being updated. Please check back soon.`,
@@ -1257,25 +1249,40 @@ async function computeBotReply(
   // Fetch active menu items once at the beginning for use in order detection and menu building
   const activeItems = await listActiveMenuItems(vendor);
 
-  // Human handover request
-  if (includesAny(body, agentTriggers)) {
+  // Retrieve recent conversation history for AI context (last 6 messages)
+  const recentMessages = await db
+    .select()
+    .from(messagesTable)
+    .where(eq(messagesTable.conversationId, conversation.id))
+    .orderBy(desc(messagesTable.createdAt))
+    .limit(6);
+  const conversationHistory = recentMessages.reverse().map((m) => ({
+    role: m.sender as "customer" | "bot",
+    text: m.body,
+  }));
+
+  // Human handover request — use startsWithAny to avoid false positives mid-sentence
+  if (startsWithAny(body, agentTriggers) || includesAny(body, ["talk to agent", "human agent", "real person", "speak to someone"])) {
     return {
-      text: `Connecting you to a human agent now. Someone will reply here shortly.`,
+      text: `Sure thing! 🙋 I'm connecting you to a human agent now. Someone will reply here shortly.`,
       handover: true,
       adminAlert: `Handover requested by ${conversation.customerName} (${conversation.customerPhone}). Reply in WhatsApp to take over.`,
     };
   }
 
   // Help / commands
-  if (startsWithAny(body, helpTriggers) || includesAny(body, helpTriggers)) {
+  if (startsWithAny(body, helpTriggers)) {
     return {
       text: [
-        `I can help you with:`,
-        `- *menu* — see what's available`,
-        `- reply with a *number* (e.g. "1") to order an item`,
-        `- *1, 3x2, 5* to order multiple items at once`,
-        `- *paid* — confirm a payment`,
-        `- *agent* — talk to a human`,
+        `Hey! 👋 Here's what I can do:`,
+        ``,
+        `📋 *menu* — see what's available`,
+        `🛒 Reply with a *number* (e.g. "1") to order an item`,
+        `📦 *1, 3x2, 5* — order multiple items at once`,
+        `💳 *paid* — confirm a payment`,
+        `📍 *status* — check your order status`,
+        `❌ *cancel* — cancel a pending order`,
+        `🙋 *agent* — talk to a human`,
       ].join("\n"),
       handover: false,
     };
@@ -1298,12 +1305,12 @@ async function computeBotReply(
     const target = pending[0];
     if (!target) {
       return {
-        text: `We don't see a confirmed order awaiting payment. Reply *menu* to start a new order.`,
+        text: `Hmm, I don't see a confirmed order awaiting payment for you. Reply *menu* to start a new order or *status* to check an existing one.`,
         handover: false,
       };
     }
     return {
-      text: `Thanks. We've notified the vendor of your payment and they'll confirm shortly.`,
+      text: `Thanks! 🎉 We've notified the vendor of your payment — they'll confirm shortly.`,
       handover: false,
       adminAlert: `Customer ${conversation.customerName} (${conversation.customerPhone}) reports payment for order #${target.shortId} (${formatMoney(Number(target.total), vendor.currency)}). Reply *paid ${target.shortId}* once verified.`,
     };
@@ -1413,54 +1420,15 @@ async function computeBotReply(
     }
   }
 
-  if (looksLikeOrder(body, activeItems)) {
-    return await buildPendingOrderState(vendor, conversation, body);
-  }
-
-  // Order status check
-  const statusTriggers = ["status", "my order", "order status", "where is my order", "what happened to my order", "track"];
-  if (startsWithAny(body, statusTriggers) || includesAny(body, statusTriggers)) {
-    const [latestOrder] = await db
-      .select()
-      .from(ordersTable)
-      .where(
-        and(
-          eq(ordersTable.vendorId, vendor.id),
-          eq(ordersTable.customerPhone, conversation.customerPhone),
-        ),
-      )
-      .orderBy(desc(ordersTable.createdAt))
-      .limit(1);
-
-    if (!latestOrder) {
-      return {
-        text: `You don't have any orders yet. Reply *menu* to start one!`,
-        handover: false,
-      };
-    }
-
-    const statusMessages: Record<string, string> = {
-      pending: `⏳ Your order #${latestOrder.shortId} is waiting to be confirmed by the vendor.`,
-      confirmed: `✅ Your order #${latestOrder.shortId} has been confirmed. Awaiting payment.`,
-      paid: `💰 Payment received for order #${latestOrder.shortId}. Your order is being prepared!`,
-      completed: `🎉 Your order #${latestOrder.shortId} is complete!`,
-      rejected: `❌ Your order #${latestOrder.shortId} was not accepted. Reply *menu* to try again or *agent* for help.`,
-      cancelled: `🚫 Your order #${latestOrder.shortId} was cancelled.`,
-    };
-
-    const msg = statusMessages[latestOrder.status] ?? `Your order #${latestOrder.shortId} status: ${latestOrder.status}.`;
-    return { text: msg, handover: false };
-  }
-
-  // Cancel order command
+  // ── Cancel order command (BEFORE order detection to prevent "cancel my order of rice" matching as an order) ──
   const cancelTriggers = ["cancel", "cancel order", "nevermind", "never mind", "i changed my mind"];
   if (startsWithAny(body, cancelTriggers) || includesAny(body, cancelTriggers)) {
     // If there's a pending (unconfirmed) order in progress, clear it
-    const pendingOrderResult = await getPendingOrder(vendor.id, conversation.customerPhone);
-    if (pendingOrderResult.status === "found") {
+    const pendingOrderCheck = await getPendingOrder(vendor.id, conversation.customerPhone);
+    if (pendingOrderCheck.status === "found") {
       await clearPendingOrder(vendor.id, conversation.customerPhone);
       return {
-        text: `Your pending order was cancelled. Reply *menu* to start a new one!`,
+        text: `No worries! Your pending order was cancelled. Reply *menu* whenever you're ready to start a new one. 😊`,
         handover: false,
       };
     }
@@ -1486,7 +1454,7 @@ async function computeBotReply(
         .where(eq(ordersTable.id, latestOrder.id));
 
       return {
-        text: `Your order #${latestOrder.shortId} has been cancelled. Reply *menu* to start a new one!`,
+        text: `Done! Your order #${latestOrder.shortId} has been cancelled. Reply *menu* to start a new one. 😊`,
         handover: false,
       };
     }
@@ -1498,6 +1466,46 @@ async function computeBotReply(
     };
   }
 
+  // ── Order status check (also BEFORE order detection) ──
+  const statusTriggers = ["status", "my order", "order status", "where is my order", "what happened to my order", "track"];
+  if (startsWithAny(body, statusTriggers) || includesAny(body, statusTriggers)) {
+    const [latestOrder] = await db
+      .select()
+      .from(ordersTable)
+      .where(
+        and(
+          eq(ordersTable.vendorId, vendor.id),
+          eq(ordersTable.customerPhone, conversation.customerPhone),
+        ),
+      )
+      .orderBy(desc(ordersTable.createdAt))
+      .limit(1);
+
+    if (!latestOrder) {
+      return {
+        text: `You don't have any orders yet. Reply *menu* to get started! 🍽️`,
+        handover: false,
+      };
+    }
+
+    const statusMessages: Record<string, string> = {
+      pending: `⏳ Your order #${latestOrder.shortId} is waiting to be confirmed by the vendor.`,
+      confirmed: `✅ Your order #${latestOrder.shortId} has been confirmed! Awaiting payment.`,
+      paid: `💰 Payment received for order #${latestOrder.shortId}. Your order is being prepared!`,
+      completed: `🎉 Your order #${latestOrder.shortId} is complete!`,
+      rejected: `❌ Your order #${latestOrder.shortId} was not accepted. Reply *menu* to try again or *agent* for help.`,
+      cancelled: `🚫 Your order #${latestOrder.shortId} was cancelled.`,
+    };
+
+    const msg = statusMessages[latestOrder.status] ?? `Your order #${latestOrder.shortId} status: ${latestOrder.status}.`;
+    return { text: msg, handover: false };
+  }
+
+  // ── Order detection (after cancel/status to prevent false matches) ──
+  if (looksLikeOrder(body, activeItems)) {
+    return await buildPendingOrderState(vendor, conversation, body);
+  }
+
   // Menu request
   if (startsWithAny(body, menuTriggers)) {
     return { text: await buildMenuMessage(vendor), handover: false };
@@ -1507,17 +1515,37 @@ async function computeBotReply(
   if (startsWithAny(body, greetingTriggers)) {
     const welcome =
       vendor.welcomeMessage ??
-      `Welcome to ${vendor.name}. Reply *menu* to see what's available.`;
+      `Hey there! 👋 Welcome to *${vendor.name}*. Reply *menu* to see what's available!`;
     return { text: welcome, handover: false };
+  }
+
+  // ── AI-powered fallback for ambiguous messages (Fix 5.4) ──
+  try {
+    const historyContext = conversationHistory.length > 0
+      ? conversationHistory.map((m) => `${m.role === "customer" ? "Customer" : "Bot"}: ${m.text}`).join("\n")
+      : "";
+    const menuContext = activeItems.length > 0
+      ? activeItems.map((item) => `- ${item.name} (${formatMoney(Number(item.price), vendor.currency)})`).join("\n")
+      : "";
+
+    const aiResponse = await aiExtractOrder(body, activeItems.map((item) => ({ name: item.name, price: item.price })));
+    if (aiResponse && aiResponse.length > 0) {
+      // The AI found order items in an ambiguously phrased message
+      return await buildPendingOrderState(vendor, conversation, body);
+    }
+  } catch {
+    // AI fallback failed — continue to generic fallback
   }
 
   // Fallback
   return {
     text: [
-      `I'm not sure I understood. Try:`,
-      `- *menu* to see what we offer`,
-      `- *order <item> x<qty>* to order`,
-      `- *agent* to reach a human`,
+      `Hmm, I didn't quite get that! Here's what I can help with:`,
+      ``,
+      `📋 *menu* — see what we offer`,
+      `🛒 *order <item> x<qty>* — place an order`,
+      `📍 *status* — check your order`,
+      `🙋 *agent* — reach a human`,
     ].join("\n"),
     handover: false,
   };
@@ -1874,104 +1902,22 @@ export async function handleAdminCommand(
     return { text: lines.join("\n") };
   }
 
-  // confirm [id]
+  // confirm [id] — delegate to shared intent handler
   if (lower === "confirm" || lower.startsWith("confirm ")) {
-    const id = body.slice(7).trim();
-    const order = id
-      ? await findOrderByShortId(vendor.id, id)
-      : await findLatestPendingOrder(vendor.id);
-    if (!order) return { text: `No matching order to confirm.` };
-    if (order.status !== "pending") {
-      return { text: `Order #${order.shortId} is already ${order.status}.` };
-    }
-    await db
-      .update(ordersTable)
-      .set({ status: "confirmed" })
-      .where(eq(ordersTable.id, order.id));
-    await notifyCustomer(
-      vendor,
-      order.customerPhone,
-      paymentInstructions(vendor, Number(order.total)),
-    );
-    return {
-      text: `Confirmed #${order.shortId} for ${order.customerName}. Payment instructions were sent to the customer.`,
-    };
+    const id = body.slice(7).trim() || null;
+    return await handleAdminConfirmOrder(vendor, id);
   }
 
-  // reject [id]
+  // reject [id] — delegate to shared intent handler
   if (lower === "reject" || lower.startsWith("reject ")) {
-    const id = body.slice(6).trim();
-    const order = id
-      ? await findOrderByShortId(vendor.id, id)
-      : await findLatestPendingOrder(vendor.id);
-    if (!order) return { text: `No matching order to reject.` };
-    if (order.status !== "pending") {
-      return { text: `Order #${order.shortId} is already ${order.status}.` };
-    }
-    await db
-      .update(ordersTable)
-      .set({ status: "rejected" })
-      .where(eq(ordersTable.id, order.id));
-    await notifyCustomer(
-      vendor,
-      order.customerPhone,
-      `Sorry, your order #${order.shortId} couldn't be accepted right now. Reply *menu* to try again.`,
-    );
-    return {
-      text: `Rejected #${order.shortId}. The customer was notified.`,
-    };
+    const id = body.slice(6).trim() || null;
+    return await handleAdminRejectOrder(vendor, id);
   }
 
-  // paid [id]  (vendor confirms payment was received)
+  // paid [id] — delegate to shared intent handler
   if (lower === "paid" || lower.startsWith("paid ")) {
-    const id = body.slice(4).trim();
-    const order = id
-      ? await findOrderByShortId(vendor.id, id)
-      : await findLatestConfirmedOrder(vendor.id);
-    if (!order) return { text: `No matching order to mark paid.` };
-    if (order.paymentStatus === "paid") {
-      return { text: `Order #${order.shortId} is already marked paid.` };
-    }
-    await db
-      .update(ordersTable)
-      .set({ status: "paid", paymentStatus: "paid" })
-      .where(eq(ordersTable.id, order.id));
-    await db.insert(paymentsTable).values({
-      vendorId: vendor.id,
-      orderId: order.id,
-      customerName: order.customerName,
-      amount: order.total,
-      currency: order.currency,
-      method: "bank_transfer",
-      status: "confirmed",
-      reference: "vendor_confirmed_via_chat",
-    });
-    await db
-      .insert(customersTable)
-      .values({
-        vendorId: vendor.id,
-        phone: order.customerPhone,
-        name: order.customerName,
-        totalOrders: 1,
-        totalSpent: order.total,
-      })
-      .onConflictDoUpdate({
-        target: [customersTable.vendorId, customersTable.phone],
-        set: {
-          totalOrders: sql`${customersTable.totalOrders} + 1`,
-          totalSpent: sql`${customersTable.totalSpent} + ${order.total}`,
-          name: order.customerName,
-          lastSeenAt: new Date(),
-        },
-      });
-    await notifyCustomer(
-      vendor,
-      order.customerPhone,
-      `Payment received for order #${order.shortId}. Thank you!`,
-    );
-    return {
-      text: `Payment confirmed on #${order.shortId}. The customer was notified.`,
-    };
+    const id = body.slice(4).trim() || null;
+    return await handleAdminConfirmPayment(vendor, id);
   }
 
   // Fallback

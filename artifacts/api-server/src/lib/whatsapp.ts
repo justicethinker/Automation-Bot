@@ -149,7 +149,8 @@ export async function sendBatchWhatsAppMessages(
 ): Promise<SendMessageResult[]> {
   const results: SendMessageResult[] = [];
 
-  for (const msg of messages) {
+  for (let i = 0; i < messages.length; i++) {
+    const msg = messages[i]!;
     const result = await sendWhatsAppMessage({
       phoneNumberId,
       to: msg.to,
@@ -158,7 +159,7 @@ export async function sendBatchWhatsAppMessages(
     results.push(result);
 
     // Rate limiting: wait between messages
-    if (messages.indexOf(msg) < messages.length - 1) {
+    if (i < messages.length - 1) {
       await new Promise((resolve) => setTimeout(resolve, batchDelayMs));
     }
   }

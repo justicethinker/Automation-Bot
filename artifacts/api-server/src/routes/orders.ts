@@ -18,6 +18,7 @@ import {
 import { toOrder } from "../lib/serializers";
 import { notifyOrderConfirmedToCustomer } from "../lib/bot";
 import { sendWhatsAppMessage } from "../lib/whatsapp";
+import { queueOutboundMessage } from "../lib/queue";
 
 const router: IRouter = Router();
 
@@ -99,12 +100,12 @@ router.patch("/orders/:orderId", async (req, res) => {
   }
 
   // When rejecting: notify the customer.
-  if (body.data.status === "rejected" && vendor) {
-    await sendWhatsAppMessage({
-      phoneNumberId: vendor.phoneNumberId,
-      to: updated.customerPhone,
-      text: `Sorry, your order #${updated.id.slice(0, 8)} couldn't be accepted right now. Reply *menu* to try again.`,
-    });
+  if (body.data.status === "rejected" && vendor && vendor.phoneNumberId) {
+    await queueOutboundMessage(
+      vendor.phoneNumberId,
+      updated.customerPhone,
+      `Sorry, your order #${updated.id.slice(0, 8)} couldn't be accepted right now. Reply *menu* to try again.`,
+    );
   }
 
   // When moving to paid: record a payment + bump customer totals + notify customer.
@@ -137,12 +138,12 @@ router.patch("/orders/:orderId", async (req, res) => {
           lastSeenAt: new Date(),
         },
       });
-    if (vendor) {
-      await sendWhatsAppMessage({
-        phoneNumberId: vendor.phoneNumberId,
-        to: updated.customerPhone,
-        text: `Payment received for order #${updated.id.slice(0, 8)}. Thank you!`,
-      });
+    if (vendor && vendor.phoneNumberId) {
+      await queueOutboundMessage(
+        vendor.phoneNumberId,
+        updated.customerPhone,
+        `Payment received for order #${updated.id.slice(0, 8)}. Thank you!`,
+      );
     }
   }
 

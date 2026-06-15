@@ -18,6 +18,17 @@ const router: IRouter = Router();
 router.get("/vendors/:vendorId/promotions", async (req, res) => {
   const params = ListVendorPromotionsParams.safeParse(req.params);
   if (!params.success) return res.status(400).json({ error: "invalid_params" });
+
+  // Promotions are a Pro-only feature
+  const [vendor] = await db
+    .select()
+    .from(vendorsTable)
+    .where(eq(vendorsTable.id, params.data.vendorId))
+    .limit(1);
+  if (!vendor) return res.status(404).json({ error: "vendor_not_found" });
+  if (!hasFeature(vendor, "promotions")) {
+    return res.status(403).json({ error: "pro_feature", message: "Promotions requires a Pro plan." });
+  }
   const rows = await db
     .select()
     .from(promotionsTable)

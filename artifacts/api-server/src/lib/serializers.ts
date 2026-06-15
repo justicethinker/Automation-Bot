@@ -77,7 +77,8 @@ export function toOrder(row: OrderRow, vendorName?: string) {
       | "confirmed"
       | "paid"
       | "rejected"
-      | "completed",
+      | "completed"
+      | "cancelled",
     paymentStatus: row.paymentStatus as "pending" | "paid",
     total: Number(row.total),
     currency: row.currency,

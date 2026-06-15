@@ -10,9 +10,12 @@ import {
 } from "@workspace/db";
 import { and, eq, gte, sql, inArray, desc } from "drizzle-orm";
 import { GetVendorAnalyticsParams } from "@workspace/api-zod";
+import { hasFeature } from "../lib/plans";
 
 const router: IRouter = Router();
 
+// NOTE: This is a platform-admin endpoint. Access is gated by the global API_SECRET_KEY.
+// It intentionally returns cross-vendor aggregate data for the platform operator.
 router.get("/dashboard/summary", async (_req, res) => {
   const vendors = await db.select().from(vendorsTable);
   const totalVendors = vendors.length;
@@ -168,6 +171,17 @@ router.get("/dashboard/activity", async (_req, res) => {
 router.get("/vendors/:vendorId/analytics", async (req, res) => {
   const params = GetVendorAnalyticsParams.safeParse(req.params);
   if (!params.success) return res.status(400).json({ error: "invalid_params" });
+
+  // Analytics is a Pro-only feature
+  const [vendor] = await db
+    .select()
+    .from(vendorsTable)
+    .where(eq(vendorsTable.id, params.data.vendorId))
+    .limit(1);
+  if (!vendor) return res.status(404).json({ error: "vendor_not_found" });
+  if (!hasFeature(vendor, "analytics")) {
+    return res.status(403).json({ error: "pro_feature", message: "Analytics requires a Pro plan." });
+  }
 
   const since = new Date();
   since.setDate(since.getDate() - 13);
